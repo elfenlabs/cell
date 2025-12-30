@@ -112,6 +112,14 @@ namespace Cell {
          */
         void free_large(void *ptr);
 
+        /**
+         * @brief Flushes thread-local sub-cell caches to global bins.
+         *
+         * Call this before thread exit to avoid leaked cached blocks.
+         * Only affects bins 0-3 (16B, 32B, 64B, 128B).
+         */
+        void flush_tls_bin_caches();
+
         // =====================================================================
         // Cell-Level Allocation API (for 16KB blocks or internal use)
         // =====================================================================
@@ -177,6 +185,13 @@ namespace Cell {
          * @param tag Tag for profiling.
          */
         void init_cell_for_bin(void *cell, size_t bin_index, uint8_t tag);
+
+        /**
+         * @brief Batch refills TLS cache from global bin.
+         * @param bin_index Size class index (must be < kTlsBinCacheCount).
+         * @param tag Tag for profiling (used if new cell is needed).
+         */
+        void batch_refill_tls_bin(size_t bin_index, uint8_t tag);
 
         // =====================================================================
         // Members

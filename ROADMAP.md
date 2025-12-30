@@ -39,9 +39,9 @@ Memory Statistics complete:
 **Goal:** Reduce contention on hot size classes by adding thread-local caches.
 
 **Features:**
-- [ ] TLS cache for bins 0-3 (16B, 32B, 64B, 128B) — most common sizes
-- [ ] Batch refill from global bin
-- [ ] Flush on thread exit
+- [x] TLS cache for bins 0-3 (16B, 32B, 64B, 128B) — most common sizes
+- [x] Batch refill from global bin
+- [x] Flush on thread exit
 
 ---
 
@@ -60,7 +60,6 @@ Memory Statistics complete:
 
 - [x] Large page support (`MAP_HUGETLB` / `MEM_LARGE_PAGES`) for >2MB allocations
 - [ ] Memory decommit for long-running games
-- [ ] NUMA-aware allocation (future)
 
 ---
 

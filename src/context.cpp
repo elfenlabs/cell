@@ -1,5 +1,7 @@
 #include "cell/context.h"
 
+#include "tls_bin_cache.h"
+
 #include <cassert>
 #include <cstring>
 
@@ -64,6 +66,13 @@ namespace Cell {
     }
 
     Context::~Context() {
+        // Clear TLS bin caches to prevent stale pointers for future Contexts.
+        // The cached blocks will be freed when the memory region is unmapped.
+        // Note: This only clears the current thread's caches.
+        for (size_t i = 0; i < kTlsBinCacheCount; ++i) {
+            t_bin_cache[i].count = 0;
+        }
+
         // Buddy allocator destructor handles its cleanup
         m_buddy.reset();
         m_allocator.reset();
@@ -287,6 +296,23 @@ namespace Cell {
     void *Context::alloc_from_bin(size_t bin_index, uint8_t tag) {
         assert(bin_index < kNumSizeBins);
 
+        // TLS fast path for hot bins (0-3: 16B, 32B, 64B, 128B)
+        if (bin_index < kTlsBinCacheCount) {
+            TlsBinCache &cache = t_bin_cache[bin_index];
+
+            // Try TLS cache first (no lock)
+            if (!cache.is_empty()) {
+                return cache.pop();
+            }
+
+            // Try batch refill from global bin
+            batch_refill_tls_bin(bin_index, tag);
+            if (!cache.is_empty()) {
+                return cache.pop();
+            }
+        }
+
+        // Fallback: lock-based allocation from global bin
         std::lock_guard<std::mutex> lock(m_bin_locks[bin_index]);
         SizeBin &bin = m_bins[bin_index];
 
@@ -355,6 +381,16 @@ namespace Cell {
         std::memset(ptr, kPoisonByte, block_size);
 #endif
 
+        // TLS fast path for hot bins (0-3: 16B, 32B, 64B, 128B)
+        if (bin_index < kTlsBinCacheCount) {
+            TlsBinCache &cache = t_bin_cache[bin_index];
+            if (!cache.is_full()) {
+                cache.push(static_cast<FreeBlock *>(ptr));
+                return;
+            }
+        }
+
+        // Fallback: lock-based free to global bin
         std::lock_guard<std::mutex> lock(m_bin_locks[bin_index]);
         SizeBin &bin = m_bins[bin_index];
         CellMetadata *metadata = get_metadata(header);
@@ -441,6 +477,118 @@ namespace Cell {
         }
 
         metadata->free_list = prev;
+    }
+
+    void Context::batch_refill_tls_bin(size_t bin_index, uint8_t tag) {
+        assert(bin_index < kTlsBinCacheCount);
+
+        TlsBinCache &cache = t_bin_cache[bin_index];
+        size_t to_refill = kTlsBinBatchRefill;
+
+        std::lock_guard<std::mutex> lock(m_bin_locks[bin_index]);
+        SizeBin &bin = m_bins[bin_index];
+
+        // Try to get blocks from partial cells
+        while (to_refill > 0 && !cache.is_full() && bin.partial_head) {
+            CellHeader *cell_header = bin.partial_head;
+            CellMetadata *metadata = get_metadata(cell_header);
+
+            while (to_refill > 0 && !cache.is_full() && metadata->free_list) {
+                FreeBlock *block = metadata->free_list;
+                metadata->free_list = block->next;
+                cell_header->free_count--;
+                cache.push(block);
+                --to_refill;
+
+                bin.total_allocated++;
+                bin.current_allocated++;
+            }
+
+            // If cell is now full, remove from partial list
+            if (cell_header->free_count == 0) {
+                bin.partial_head = reinterpret_cast<CellHeader *>(metadata->next_partial);
+                metadata->next_partial = nullptr;
+            }
+        }
+
+        // If we still need more blocks, allocate a fresh cell
+        if (to_refill > 0 && !cache.is_full()) {
+            void *raw_cell = m_allocator->alloc();
+            if (raw_cell) {
+                init_cell_for_bin(raw_cell, bin_index, tag);
+
+                CellHeader *cell_header = static_cast<CellHeader *>(raw_cell);
+                CellMetadata *metadata = get_metadata(cell_header);
+
+                // Take blocks from the new cell
+                while (to_refill > 0 && !cache.is_full() && metadata->free_list) {
+                    FreeBlock *block = metadata->free_list;
+                    metadata->free_list = block->next;
+                    cell_header->free_count--;
+                    cache.push(block);
+                    --to_refill;
+
+                    bin.total_allocated++;
+                    bin.current_allocated++;
+                }
+
+                // Add remaining blocks to partial list
+                if (cell_header->free_count > 0) {
+                    metadata->next_partial = reinterpret_cast<CellHeader *>(bin.partial_head);
+                    bin.partial_head = cell_header;
+                }
+            }
+        }
+    }
+
+    void Context::flush_tls_bin_caches() {
+        for (size_t bin_index = 0; bin_index < kTlsBinCacheCount; ++bin_index) {
+            TlsBinCache &cache = t_bin_cache[bin_index];
+
+            while (!cache.is_empty()) {
+                FreeBlock *block = cache.pop();
+                CellHeader *header = get_header(block);
+
+                // Use the lock-based path for proper cell management
+                std::lock_guard<std::mutex> lock(m_bin_locks[bin_index]);
+                SizeBin &bin = m_bins[bin_index];
+                CellMetadata *metadata = get_metadata(header);
+
+                bool was_full = (header->free_count == 0);
+
+                block->next = metadata->free_list;
+                metadata->free_list = block;
+                header->free_count++;
+
+                bin.current_allocated--;
+
+                size_t max_blocks = blocks_per_cell(bin_index);
+
+                if (header->free_count == max_blocks) {
+                    if (bin.warm_cell_count < kWarmCellsPerBin) {
+                        bin.warm_cell_count++;
+                        if (was_full) {
+                            metadata->next_partial =
+                                reinterpret_cast<CellHeader *>(bin.partial_head);
+                            bin.partial_head = header;
+                        }
+                    } else {
+                        CellHeader **pp = &bin.partial_head;
+                        while (*pp && *pp != header) {
+                            pp = reinterpret_cast<CellHeader **>(&get_metadata(*pp)->next_partial);
+                        }
+                        if (*pp == header) {
+                            *pp = reinterpret_cast<CellHeader *>(metadata->next_partial);
+                        }
+                        metadata->next_partial = nullptr;
+                        m_allocator->free(header);
+                    }
+                } else if (was_full) {
+                    metadata->next_partial = reinterpret_cast<CellHeader *>(bin.partial_head);
+                    bin.partial_head = header;
+                }
+            }
+        }
     }
 
 }

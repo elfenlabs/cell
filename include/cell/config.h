@@ -37,6 +37,15 @@ namespace Cell {
     /** @brief Number of cells cached per thread (TLS). */
     static constexpr size_t kTlsCacheCapacity = 64;
 
+    /** @brief Number of bins with TLS caching (bins 0-3: 16B, 32B, 64B, 128B). */
+    static constexpr size_t kTlsBinCacheCount = 4;
+
+    /** @brief Number of blocks cached per bin per thread. */
+    static constexpr size_t kTlsBinCacheCapacity = 32;
+
+    /** @brief Number of blocks to refill from global bin at once. */
+    static constexpr size_t kTlsBinBatchRefill = 16;
+
     // Static validation for allocation tiers
     static_assert(kSuperblockSize >= kCellSize, "Superblock must be >= cell size");
     static_assert(kSuperblockSize % kCellSize == 0, "Superblock must be multiple of cell size");
