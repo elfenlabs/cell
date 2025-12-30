@@ -290,6 +290,33 @@ namespace Cell {
     }
 
     // =========================================================================
+    // Memory Management API
+    // =========================================================================
+
+    size_t Context::decommit_unused() {
+        size_t total = 0;
+
+        // Flush TLS caches first to get accurate free counts
+        if (m_allocator) {
+            m_allocator->flush_tls_cache();
+            total += m_allocator->decommit_unused();
+        }
+
+        // Could also add buddy allocator decommit here in the future
+
+        return total;
+    }
+
+    size_t Context::committed_bytes() const {
+        size_t total = 0;
+        if (m_allocator) {
+            total += m_allocator->committed_bytes();
+        }
+        // Could add buddy allocator committed bytes here
+        return total;
+    }
+
+    // =========================================================================
     // Sub-Cell Implementation
     // =========================================================================
 

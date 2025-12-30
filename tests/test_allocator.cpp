@@ -183,6 +183,50 @@ TEST(CellLeakDetection) {
     printf("  PASSED (no leaks detected: %zu cells recycled)\n", alloc_count);
 }
 
+// Test 6: Memory decommit
+TEST(MemoryDecommit) {
+    Cell::Config config;
+    config.reserve_size = 16 * 1024 * 1024;
+
+    Cell::Context ctx(config);
+
+    // Allocate 2 superblocks worth of cells
+    const size_t count = Cell::kCellsPerSuperblock * 2;
+    std::vector<Cell::CellData *> cells;
+
+    for (size_t i = 0; i < count; ++i) {
+        Cell::CellData *cell = ctx.alloc_cell(0);
+        assert(cell != nullptr);
+        cells.push_back(cell);
+    }
+
+    size_t committed_before_free = ctx.committed_bytes();
+    printf("  Committed after alloc: %zu bytes\n", committed_before_free);
+    assert(committed_before_free >= count * Cell::kCellSize && "Should have committed memory");
+
+    // Free all cells
+    for (auto *cell : cells) {
+        ctx.free_cell(cell);
+    }
+    cells.clear();
+
+    // Decommit unused memory
+    size_t freed = ctx.decommit_unused();
+    size_t committed_after = ctx.committed_bytes();
+
+    printf("  Decommitted: %zu bytes\n", freed);
+    printf("  Committed after decommit: %zu bytes\n", committed_after);
+    assert(freed > 0 && "Should have freed some memory");
+    assert(committed_after < committed_before_free && "Committed should decrease");
+
+    // Verify we can still allocate (recommit works)
+    Cell::CellData *cell = ctx.alloc_cell(0);
+    assert(cell != nullptr && "Allocation after decommit should work");
+    ctx.free_cell(cell);
+
+    printf("  PASSED\n");
+}
+
 int main() {
     printf("Cell Allocator Tests\n");
     printf("====================\n");

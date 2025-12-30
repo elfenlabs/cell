@@ -138,6 +138,25 @@ namespace Cell {
         void free_cell(CellData *cell);
 
         // =====================================================================
+        // Memory Management API
+        // =====================================================================
+
+        /**
+         * @brief Decommits all fully-free memory regions to the OS.
+         *
+         * Call during loading screens, pause menus, or other idle periods
+         * to release physical memory while keeping virtual address space.
+         *
+         * @return Number of bytes released to the OS.
+         */
+        size_t decommit_unused();
+
+        /**
+         * @brief Returns currently committed physical memory.
+         */
+        [[nodiscard]] size_t committed_bytes() const;
+
+        // =====================================================================
         // Statistics (compile-time optional via CELL_ENABLE_STATS)
         // =====================================================================
 

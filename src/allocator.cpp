@@ -4,6 +4,7 @@
 #include "tls_cache.h"
 
 #include <cassert>
+#include <cstring>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -21,37 +22,62 @@ namespace Cell {
 
         m_base = reinterpret_cast<void *>(aligned_addr);
         m_reserved_size = reserved_size > alignment_offset ? reserved_size - alignment_offset : 0;
+
+        // Calculate number of superblocks we can fit
+        m_num_superblocks = m_reserved_size / kSuperblockSize;
+        if (m_num_superblocks > kMaxSuperblocks) {
+            m_num_superblocks = kMaxSuperblocks;
+            m_reserved_size = m_num_superblocks * kSuperblockSize;
+        }
+
+        // Initialize all superblocks as uncommitted
+        for (size_t i = 0; i < m_num_superblocks; ++i) {
+            m_superblock_states[i] = SuperblockState::kUncommitted;
+            m_free_cells[i].store(0, std::memory_order_relaxed);
+        }
     }
 
     Allocator::~Allocator() {
         // Clear TLS cache to prevent stale pointers after Context destruction
-        // Note: This only clears the current thread's cache. Multi-threaded
-        // applications should call flush_tls_cache() from each thread before
-        // destroying the Context.
         t_cache.count = 0;
     }
 
     void *Allocator::alloc() {
         void *result = nullptr;
+        bool from_pool = false; // Track if from TLS or global (not fresh from OS)
 
         // Tier 1: Try TLS cache first (no locks)
         if (!t_cache.is_empty()) {
             result = t_cache.pop();
+            from_pool = true;
         }
         // Tier 2: Try global pool (lock-free)
         else if (FreeCell *cell = pop_global()) {
             result = cell;
+            from_pool = true;
         }
-        // Tier 3: Allocate from OS
+        // Tier 3: Allocate from OS (count already set in refill_from_os)
         else {
             result = refill_from_os();
+            // from_pool stays false - refill_from_os handles accounting
+        }
+
+        // Track cell allocation for superblock state
+        // Only decrement for tier 1/2; tier 3 sets count correctly already
+        if (result && from_pool) {
+            size_t sb_idx = get_superblock_index(result);
+            if (sb_idx < m_num_superblocks) {
+                uint16_t old_free = m_free_cells[sb_idx].fetch_sub(1, std::memory_order_relaxed);
+                if (old_free == kCellsPerSuperblock) {
+                    m_superblock_states[sb_idx] = SuperblockState::kInUse;
+                }
+            }
         }
 
 #ifndef NDEBUG
         if (result) {
             auto *header = static_cast<CellHeader *>(result);
             header->magic = kCellMagic;
-            // Preserve generation from previous free, or init to 0 for fresh cells
         }
 #endif
 
@@ -64,14 +90,21 @@ namespace Cell {
 
 #ifndef NDEBUG
         auto *header = static_cast<CellHeader *>(ptr);
-        // Check for double-free
         assert(header->magic != kCellFreeMagic && "Double-free detected!");
-        // Check for valid cell (catches wild pointers in some cases)
         assert(header->magic == kCellMagic && "Freeing invalid or corrupted cell!");
-        // Mark as freed and increment generation
         header->magic = kCellFreeMagic;
         header->generation++;
 #endif
+
+        // Track cell free for superblock state
+        size_t sb_idx = get_superblock_index(ptr);
+        if (sb_idx < m_num_superblocks) {
+            uint16_t new_free = m_free_cells[sb_idx].fetch_add(1, std::memory_order_relaxed) + 1;
+            // Mark as free if all cells are now free
+            if (new_free == kCellsPerSuperblock) {
+                m_superblock_states[sb_idx] = SuperblockState::kFree;
+            }
+        }
 
         auto *cell = static_cast<FreeCell *>(ptr);
 
@@ -86,28 +119,118 @@ namespace Cell {
     }
 
     void Allocator::flush_tls_cache() {
-        // Move all cells from TLS cache to global pool
         while (!t_cache.is_empty()) {
             push_global(t_cache.pop());
         }
     }
 
+    size_t Allocator::decommit_unused() {
+        std::lock_guard<std::mutex> lock(m_decommit_mutex);
+        size_t total_freed = 0;
+
+        for (size_t i = 0; i < m_num_superblocks; ++i) {
+            if (m_superblock_states[i] == SuperblockState::kFree) {
+                void *sb_addr = static_cast<char *>(m_base) + i * kSuperblockSize;
+
+#if defined(_WIN32)
+                if (VirtualFree(sb_addr, kSuperblockSize, MEM_DECOMMIT)) {
+                    m_superblock_states[i] = SuperblockState::kDecommitted;
+                    total_freed += kSuperblockSize;
+                }
+#else
+                if (madvise(sb_addr, kSuperblockSize, MADV_DONTNEED) == 0) {
+                    m_superblock_states[i] = SuperblockState::kDecommitted;
+                    total_freed += kSuperblockSize;
+                }
+#endif
+            }
+        }
+
+        return total_freed;
+    }
+
+    size_t Allocator::committed_bytes() const {
+        size_t committed = 0;
+        for (size_t i = 0; i < m_num_superblocks; ++i) {
+            SuperblockState state = m_superblock_states[i];
+            if (state == SuperblockState::kInUse || state == SuperblockState::kFree) {
+                committed += kSuperblockSize;
+            }
+        }
+        return committed;
+    }
+
+    size_t Allocator::get_superblock_index(void *ptr) const {
+        auto addr = reinterpret_cast<uintptr_t>(ptr);
+        auto base_addr = reinterpret_cast<uintptr_t>(m_base);
+        if (addr < base_addr)
+            return m_num_superblocks; // Invalid
+        return (addr - base_addr) / kSuperblockSize;
+    }
+
+    bool Allocator::recommit_superblock(size_t index) {
+        if (index >= m_num_superblocks)
+            return false;
+        if (m_superblock_states[index] != SuperblockState::kDecommitted)
+            return true;
+
+        void *sb_addr = static_cast<char *>(m_base) + index * kSuperblockSize;
+
+#if defined(_WIN32)
+        if (!VirtualAlloc(sb_addr, kSuperblockSize, MEM_COMMIT, PAGE_READWRITE)) {
+            return false;
+        }
+#else
+        if (mprotect(sb_addr, kSuperblockSize, PROT_READ | PROT_WRITE) != 0) {
+            return false;
+        }
+#endif
+
+        m_superblock_states[index] = SuperblockState::kInUse;
+        return true;
+    }
+
     void *Allocator::refill_from_global() { return pop_global(); }
 
     void *Allocator::refill_from_os() {
-        // Atomically claim a superblock worth of address space
+        // Find the next uncommitted superblock
+        size_t sb_idx = m_committed_end.load(std::memory_order_relaxed) / kSuperblockSize;
+
+        // Check if we need to recommit a decommitted superblock first
+        // (This handles the case where we decommitted and need to reuse)
+        for (size_t i = 0; i < m_num_superblocks; ++i) {
+            if (m_superblock_states[i] == SuperblockState::kDecommitted) {
+                if (recommit_superblock(i)) {
+                    // Re-carve this superblock
+                    void *sb_addr = static_cast<char *>(m_base) + i * kSuperblockSize;
+                    auto *base_ptr = static_cast<char *>(sb_addr);
+
+                    // Reset free count (we're about to hand out all cells)
+                    m_free_cells[i].store(kCellsPerSuperblock - 1, std::memory_order_relaxed);
+
+                    for (size_t j = 1; j < kCellsPerSuperblock; ++j) {
+                        auto *cell = reinterpret_cast<FreeCell *>(base_ptr + j * kCellSize);
+                        push_global(cell);
+                    }
+
+                    return sb_addr;
+                }
+            }
+        }
+
+        // Atomically claim a new superblock
         size_t current_end = m_committed_end.load(std::memory_order_relaxed);
         size_t new_end;
 
         do {
             new_end = current_end + kSuperblockSize;
             if (new_end > m_reserved_size) {
-                return nullptr; // Out of reserved space
+                return nullptr;
             }
         } while (!m_committed_end.compare_exchange_weak(
             current_end, new_end, std::memory_order_acq_rel, std::memory_order_relaxed));
 
-        // Commit the superblock
+        sb_idx = current_end / kSuperblockSize;
         void *superblock_start = static_cast<char *>(m_base) + current_end;
 
 #if defined(_WIN32)
@@ -120,6 +243,10 @@ namespace Cell {
         }
 #endif
 
+        // Mark superblock as in-use
+        m_superblock_states[sb_idx] = SuperblockState::kInUse;
+        m_free_cells[sb_idx].store(kCellsPerSuperblock - 1, std::memory_order_relaxed);
+
         // Carve superblock into cells, push all but one to global pool
         auto *base_ptr = static_cast<char *>(superblock_start);
 
@@ -128,12 +255,10 @@ namespace Cell {
             push_global(cell);
         }
 
-        // Return the first cell directly
         return superblock_start;
     }
 
     void Allocator::push_global(FreeCell *c) {
-        // Lock-free push to atomic stack
         FreeCell *old_head = m_global_head.load(std::memory_order_relaxed);
         do {
             c->next = old_head;
@@ -142,7 +267,6 @@ namespace Cell {
     }
 
     FreeCell *Allocator::pop_global() {
-        // Lock-free pop from atomic stack
         FreeCell *old_head = m_global_head.load(std::memory_order_acquire);
         while (old_head) {
             FreeCell *new_head = old_head->next;
@@ -150,7 +274,6 @@ namespace Cell {
                                                     std::memory_order_acquire)) {
                 return old_head;
             }
-            // old_head is updated by compare_exchange_weak on failure
         }
         return nullptr;
     }

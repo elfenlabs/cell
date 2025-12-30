@@ -59,7 +59,7 @@ Memory Statistics complete:
 ### Platform Optimizations
 
 - [x] Large page support (`MAP_HUGETLB` / `MEM_LARGE_PAGES`) for >2MB allocations
-- [ ] Memory decommit for long-running games
+- [x] Memory decommit for long-running games
 
 ---
 
