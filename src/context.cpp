@@ -1,4 +1,4 @@
-#include "cell/cell.h"
+#include "cell/context.h"
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -33,7 +33,6 @@ namespace Cell {
 
     CellData *Context::alloc(MemoryTag tag) {
         // TODO: Implement pool/TLS allocation
-        // For now, return nullptr (stub)
         (void)tag;
         return nullptr;
     }
@@ -43,4 +42,4 @@ namespace Cell {
         (void)cell;
     }
 
-} // namespace Cell
+}

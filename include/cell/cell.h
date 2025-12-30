@@ -1,46 +1,38 @@
 #pragma once
 
+#include <cstdint>
+
 #include "config.h"
-#include "types.h"
 
 namespace Cell {
 
     /**
-     * @brief A memory environment owning a reserved virtual address range.
-     *
-     * RAII: Memory is released when the Context is destroyed.
+     * @brief Tags for memory profiling and subsystem identification.
      */
-    class Context {
-    public:
-        /// Creates a new memory environment with the given configuration.
-        explicit Context(const Config &config = Config{});
+    enum class MemoryTag : uint8_t {
+        Unknown = 0, /**< Untagged or unknown memory. */
+        General,     /**< General purpose allocation. */
+        // Add application-specific tags here
+    };
 
-        /// Releases all virtual and physical memory.
-        ~Context();
+    /**
+     * @brief Header stored at the beginning of each Cell.
+     *
+     * Contains metadata for profiling and management.
+     */
+    struct CellHeader {
+        MemoryTag tag;       /**< Memory subsystem tag. */
+        uint8_t reserved[7]; /**< Reserved for future use (alignment, generation counters, etc.) */
+    };
 
-        // Non-copyable, non-movable (owns OS resources)
-        Context(const Context &) = delete;
-        Context &operator=(const Context &) = delete;
-        Context(Context &&) = delete;
-        Context &operator=(Context &&) = delete;
-
-        /**
-         * @brief Allocates a Cell from this context's pool.
-         * @param tag Metadata tag for profiling.
-         * @return Pointer to an aligned CellData, or nullptr on failure.
-         */
-        CellData *alloc(MemoryTag tag = MemoryTag::General);
-
-        /**
-         * @brief Returns a Cell to this context's pool.
-         * @param cell Pointer to the Cell to free.
-         */
-        void free(CellData *cell);
-
-    private:
-        void *m_base = nullptr;      ///< Start of reserved address range
-        size_t m_reserved_size = 0;  ///< Total reserved bytes
-        size_t m_committed_size = 0; ///< Currently committed bytes
+    /**
+     * @brief A fixed-size, aligned memory unit.
+     *
+     * The usable payload starts after the CellHeader.
+     */
+    struct CellData {
+        CellHeader header; /**< Metadata header at the start of the cell. */
+        // Remaining bytes are available for allocation
     };
 
     /**
@@ -56,4 +48,4 @@ namespace Cell {
         return reinterpret_cast<CellHeader *>(addr & kCellMask);
     }
 
-} // namespace Cell
+}
