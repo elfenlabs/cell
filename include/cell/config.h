@@ -43,6 +43,37 @@ namespace Cell {
     static_assert(kCellsPerSuperblock >= 1, "Must have at least 1 cell per superblock");
     static_assert(kTlsCacheCapacity >= 1, "TLS cache must hold at least 1 cell");
 
+    // -------------------------------------------------------------------------
+    // Sub-Cell Allocation Configuration (Size Classes)
+    // -------------------------------------------------------------------------
+
+    /** @brief Number of size class bins for sub-cell allocation. */
+    static constexpr size_t kNumSizeBins = 10;
+
+    /** @brief Minimum block size in bytes (must fit a free-list pointer). */
+    static constexpr size_t kMinBlockSize = 16;
+
+    /** @brief Maximum size for sub-cell allocation. Larger uses full cells. */
+    static constexpr size_t kMaxSubCellSize = 8192;
+
+    /** @brief Size class lookup table (power-of-2 sizes). */
+    static constexpr size_t kSizeClasses[kNumSizeBins] = {16,  32,   64,   128,  256,
+                                                          512, 1024, 2048, 4096, 8192};
+
+    /** @brief Number of warm cells to keep per bin (avoids thrashing). */
+    static constexpr size_t kWarmCellsPerBin = 2;
+
+    /** @brief Marker for full-cell allocations (not sub-cell). */
+    static constexpr uint8_t kFullCellMarker = 0xFF;
+
+    // Static validation for sub-cell configuration
+    static_assert(kNumSizeBins > 0, "Must have at least 1 size bin");
+    static_assert(kMinBlockSize >= sizeof(void *), "Min block must fit a pointer");
+    static_assert(kMaxSubCellSize < kCellSize, "Max sub-cell size must be < cell size");
+    static_assert(kSizeClasses[0] == kMinBlockSize, "First size class must match min block size");
+    static_assert(kSizeClasses[kNumSizeBins - 1] == kMaxSubCellSize,
+                  "Last size class must match max");
+
     /**
      * @brief Configuration for creating a Context.
      */

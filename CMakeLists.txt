@@ -33,4 +33,10 @@ if(CELL_BUILD_TESTS)
     add_executable(test_allocator tests/test_allocator.cpp)
     target_link_libraries(test_allocator PRIVATE cell)
     add_test(NAME test_allocator COMMAND test_allocator)
+
+    # Sub-cell allocator test
+    add_executable(test_sub_cell tests/test_sub_cell.cpp)
+    target_link_libraries(test_sub_cell PRIVATE cell)
+    add_test(NAME test_sub_cell COMMAND test_sub_cell)
 endif()
+

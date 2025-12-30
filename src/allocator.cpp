@@ -13,8 +13,15 @@
 
 namespace Cell {
 
-    Allocator::Allocator(void *base, size_t reserved_size)
-        : m_base(base), m_reserved_size(reserved_size) {}
+    Allocator::Allocator(void *base, size_t reserved_size) {
+        // Align base up to kCellSize boundary for proper cell alignment
+        auto addr = reinterpret_cast<uintptr_t>(base);
+        auto aligned_addr = (addr + kCellSize - 1) & kCellMask;
+        size_t alignment_offset = aligned_addr - addr;
+
+        m_base = reinterpret_cast<void *>(aligned_addr);
+        m_reserved_size = reserved_size > alignment_offset ? reserved_size - alignment_offset : 0;
+    }
 
     Allocator::~Allocator() {
         // Clear TLS cache to prevent stale pointers after Context destruction
