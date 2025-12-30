@@ -129,6 +129,59 @@ TEST(MultiThreaded) {
     printf("  PASSED (%d allocations across %d threads)\n", success_count.load(), num_threads);
 }
 
+// Test 5: Leak detection - verify cells are properly returned to pool
+TEST(LeakDetection) {
+    Cell::Config config;
+    config.reserve_size = 8 * 1024 * 1024; // 8MB - small to detect leaks faster
+
+    Cell::Context ctx(config);
+
+    // Calculate max cells we could allocate from reserved space
+    const size_t max_cells = config.reserve_size / Cell::kCellSize;
+
+    // First pass: allocate many cells and free them
+    std::vector<Cell::CellData *> cells;
+    const size_t alloc_count = Cell::kCellsPerSuperblock * 2; // 256 cells = 2 superblocks
+
+    printf("  Pass 1: Allocating %zu cells...\n", alloc_count);
+    for (size_t i = 0; i < alloc_count; ++i) {
+        Cell::CellData *cell = ctx.alloc(0);
+        assert(cell != nullptr && "Allocation failed");
+        cells.push_back(cell);
+    }
+
+    printf("  Pass 1: Freeing all %zu cells...\n", alloc_count);
+    for (auto *cell : cells) {
+        ctx.free(cell);
+    }
+    cells.clear();
+
+    // Second pass: allocate the same amount again
+    // If there were leaks, we'd run out of memory faster
+    printf("  Pass 2: Re-allocating %zu cells (should reuse freed cells)...\n", alloc_count);
+    for (size_t i = 0; i < alloc_count; ++i) {
+        Cell::CellData *cell = ctx.alloc(0);
+        assert(cell != nullptr && "Re-allocation failed - possible leak!");
+        cells.push_back(cell);
+    }
+
+    // Free again
+    for (auto *cell : cells) {
+        ctx.free(cell);
+    }
+    cells.clear();
+
+    // Third pass: stress test - allocate/free in a loop
+    printf("  Pass 3: Stress test - 1000 alloc/free cycles...\n");
+    for (int cycle = 0; cycle < 1000; ++cycle) {
+        Cell::CellData *cell = ctx.alloc(0);
+        assert(cell != nullptr && "Stress allocation failed");
+        ctx.free(cell);
+    }
+
+    printf("  PASSED (no leaks detected: %zu cells recycled)\n", alloc_count);
+}
+
 int main() {
     printf("Cell Allocator Tests\n");
     printf("====================\n");
