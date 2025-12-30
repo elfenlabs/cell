@@ -1,6 +1,9 @@
 #include "cell/allocator.h"
+#include "cell/cell.h"
 
 #include "tls_cache.h"
+
+#include <cassert>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -22,23 +25,46 @@ namespace Cell {
     }
 
     void *Allocator::alloc() {
+        void *result = nullptr;
+
         // Tier 1: Try TLS cache first (no locks)
         if (!t_cache.is_empty()) {
-            return t_cache.pop();
+            result = t_cache.pop();
         }
-
         // Tier 2: Try global pool (lock-free)
-        if (FreeCell *cell = pop_global()) {
-            return cell;
+        else if (FreeCell *cell = pop_global()) {
+            result = cell;
+        }
+        // Tier 3: Allocate from OS
+        else {
+            result = refill_from_os();
         }
 
-        // Tier 3: Allocate from OS
-        return refill_from_os();
+#ifndef NDEBUG
+        if (result) {
+            auto *header = static_cast<CellHeader *>(result);
+            header->magic = kCellMagic;
+            // Preserve generation from previous free, or init to 0 for fresh cells
+        }
+#endif
+
+        return result;
     }
 
     void Allocator::free(void *ptr) {
         if (!ptr)
             return;
+
+#ifndef NDEBUG
+        auto *header = static_cast<CellHeader *>(ptr);
+        // Check for double-free
+        assert(header->magic != kCellFreeMagic && "Double-free detected!");
+        // Check for valid cell (catches wild pointers in some cases)
+        assert(header->magic == kCellMagic && "Freeing invalid or corrupted cell!");
+        // Mark as freed and increment generation
+        header->magic = kCellFreeMagic;
+        header->generation++;
+#endif
 
         auto *cell = static_cast<FreeCell *>(ptr);
 
