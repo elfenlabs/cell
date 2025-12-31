@@ -11,7 +11,7 @@
 ### API Enhancements
 
 - [x] Aligned allocation API (`alloc_aligned`)
-- [ ] Realloc support (`realloc_bytes`)
+- [x] Realloc support (`realloc_bytes`)
 - [ ] STL-compatible allocator wrapper
 
 ### Production Hardening
@@ -33,5 +33,6 @@
 | 0.5.0   | Buddy + Large allocations ✓ |
 | 0.6.0   | Memory statistics ✓ |
 | 0.7.0   | TLS bin cache + Memory decommit ✓ |
-| **0.8.0** | **Debug features (guards, stack traces, leaks) ✓** ← Current |
+| 0.8.0   | Debug features (guards, stack traces, leaks) ✓ |
+| **0.9.0** | **Aligned allocation + Realloc ✓** ← Current |
 | 1.0.0   | Production-ready with all API enhancements |
