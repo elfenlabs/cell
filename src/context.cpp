@@ -352,18 +352,45 @@ namespace Cell {
             // For buddy allocations, check if new size still fits in buddy range
             if (new_size <= BuddyAllocator::kMaxBlockSize &&
                 new_size >= BuddyAllocator::kMinBlockSize) {
-                // Stay in buddy tier
-                return m_buddy->realloc_bytes(ptr, new_size);
+                // Stay in buddy tier - delegate to buddy realloc
+                // Note: buddy realloc doesn't know about leak tracking, so we handle it here
+#ifdef CELL_DEBUG_LEAKS
+                size_t old_alloc_size = 0;
+                {
+                    std::lock_guard<std::mutex> lock(m_debug_mutex);
+                    auto it = m_live_allocs.find(ptr);
+                    if (it != m_live_allocs.end()) {
+                        old_alloc_size = it->second.size;
+                        m_live_allocs.erase(it);
+                    }
+                }
+#endif
+                void *result = m_buddy->realloc_bytes(ptr, new_size);
+#ifdef CELL_DEBUG_LEAKS
+                if (result) {
+                    std::lock_guard<std::mutex> lock(m_debug_mutex);
+                    DebugAllocation alloc{};
+                    alloc.ptr = result;
+                    alloc.size = new_size;
+                    alloc.tag = tag;
+#ifdef CELL_DEBUG_STACKTRACE
+                    alloc.stack_depth = capture_stack(alloc.stack, kMaxStackDepth, 2);
+#endif
+                    m_live_allocs[result] = alloc;
+                }
+#endif
+                return result;
             }
             // Cross-tier: buddy -> somewhere else
-            // Get old size from buddy header
-            // Buddy stores order in header, block size = 2^order
-            // For now, use allocate+copy+free with conservative size estimate
+#ifdef CELL_DEBUG_LEAKS
+            {
+                std::lock_guard<std::mutex> lock(m_debug_mutex);
+                m_live_allocs.erase(ptr);
+            }
+#endif
             void *new_ptr = alloc_bytes(new_size, tag);
             if (!new_ptr)
                 return nullptr;
-            // Copy up to the smaller of old block size or new size
-            // Buddy min is 32KB, so copy at most new_size
             std::memcpy(new_ptr, ptr, new_size);
             m_buddy->free(ptr);
             return new_ptr;
@@ -374,9 +401,38 @@ namespace Cell {
             // For large allocations, check if new size still needs large
             if (new_size > BuddyAllocator::kMaxBlockSize) {
                 // Stay in large tier
-                return m_large_allocs.realloc_bytes(ptr, new_size, tag);
+#ifdef CELL_DEBUG_LEAKS
+                {
+                    std::lock_guard<std::mutex> lock(m_debug_mutex);
+                    auto it = m_live_allocs.find(ptr);
+                    if (it != m_live_allocs.end()) {
+                        m_live_allocs.erase(it);
+                    }
+                }
+#endif
+                void *result = m_large_allocs.realloc_bytes(ptr, new_size, tag);
+#ifdef CELL_DEBUG_LEAKS
+                if (result) {
+                    std::lock_guard<std::mutex> lock(m_debug_mutex);
+                    DebugAllocation alloc{};
+                    alloc.ptr = result;
+                    alloc.size = new_size;
+                    alloc.tag = tag;
+#ifdef CELL_DEBUG_STACKTRACE
+                    alloc.stack_depth = capture_stack(alloc.stack, kMaxStackDepth, 2);
+#endif
+                    m_live_allocs[result] = alloc;
+                }
+#endif
+                return result;
             }
             // Cross-tier: large -> smaller tier
+#ifdef CELL_DEBUG_LEAKS
+            {
+                std::lock_guard<std::mutex> lock(m_debug_mutex);
+                m_live_allocs.erase(ptr);
+            }
+#endif
             void *new_ptr = alloc_bytes(new_size, tag);
             if (!new_ptr)
                 return nullptr;

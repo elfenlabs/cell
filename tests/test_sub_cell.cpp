@@ -452,6 +452,131 @@ TEST(ReallocSubCellToBuddy) {
     printf("  PASSED\n");
 }
 
+// Test 17: Realloc cross-tier (sub-cell to large)
+TEST(ReallocSubCellToLarge) {
+    Cell::Config config;
+    config.reserve_size = 128 * 1024 * 1024;
+    Cell::Context ctx(config);
+
+    // Allocate small (sub-cell)
+    void *ptr = ctx.alloc_bytes(200, 7);
+    assert(ptr != nullptr);
+    std::memset(ptr, 0x11, 200);
+
+    // Grow to large range (> 2MB)
+    void *ptr2 = ctx.realloc_bytes(ptr, 3 * 1024 * 1024, 7);
+    assert(ptr2 != nullptr);
+
+    // Verify data preserved
+    uint8_t *bytes = static_cast<uint8_t *>(ptr2);
+    for (int i = 0; i < 200; ++i) {
+        assert(bytes[i] == 0x11);
+    }
+
+    ctx.free_bytes(ptr2);
+    printf("  PASSED\n");
+}
+
+// Test 18: Realloc cross-tier (buddy to large)
+TEST(ReallocBuddyToLarge) {
+    Cell::Config config;
+    config.reserve_size = 128 * 1024 * 1024;
+    Cell::Context ctx(config);
+
+    // Allocate buddy-tier (32KB-2MB)
+    void *ptr = ctx.alloc_bytes(64 * 1024, 8);
+    assert(ptr != nullptr);
+    std::memset(ptr, 0x22, 64 * 1024);
+
+    // Grow to large range (> 2MB)
+    void *ptr2 = ctx.realloc_bytes(ptr, 4 * 1024 * 1024, 8);
+    assert(ptr2 != nullptr);
+
+    // Verify data preserved (first 64KB)
+    uint8_t *bytes = static_cast<uint8_t *>(ptr2);
+    for (int i = 0; i < 64 * 1024; ++i) {
+        assert(bytes[i] == 0x22);
+    }
+
+    ctx.free_bytes(ptr2);
+    printf("  PASSED\n");
+}
+
+// Test 19: Realloc cross-tier (large to buddy)
+TEST(ReallocLargeToBuddy) {
+    Cell::Config config;
+    config.reserve_size = 128 * 1024 * 1024;
+    Cell::Context ctx(config);
+
+    // Allocate large (> 2MB)
+    void *ptr = ctx.alloc_bytes(3 * 1024 * 1024, 9);
+    assert(ptr != nullptr);
+    std::memset(ptr, 0x33, 100 * 1024); // Fill first 100KB
+
+    // Shrink to buddy range
+    void *ptr2 = ctx.realloc_bytes(ptr, 100 * 1024, 9);
+    assert(ptr2 != nullptr);
+
+    // Verify data preserved
+    uint8_t *bytes = static_cast<uint8_t *>(ptr2);
+    for (int i = 0; i < 100 * 1024; ++i) {
+        assert(bytes[i] == 0x33);
+    }
+
+    ctx.free_bytes(ptr2);
+    printf("  PASSED\n");
+}
+
+// Test 20: Realloc cross-tier (large to sub-cell)
+TEST(ReallocLargeToSubCell) {
+    Cell::Config config;
+    config.reserve_size = 128 * 1024 * 1024;
+    Cell::Context ctx(config);
+
+    // Allocate large (> 2MB)
+    void *ptr = ctx.alloc_bytes(3 * 1024 * 1024, 10);
+    assert(ptr != nullptr);
+    std::memset(ptr, 0x44, 500); // Fill first 500 bytes
+
+    // Shrink to sub-cell range
+    void *ptr2 = ctx.realloc_bytes(ptr, 500, 10);
+    assert(ptr2 != nullptr);
+
+    // Verify data preserved
+    uint8_t *bytes = static_cast<uint8_t *>(ptr2);
+    for (int i = 0; i < 500; ++i) {
+        assert(bytes[i] == 0x44);
+    }
+
+    ctx.free_bytes(ptr2);
+    printf("  PASSED\n");
+}
+
+// Test 21: Realloc cross-tier (buddy to sub-cell)
+TEST(ReallocBuddyToSubCell) {
+    Cell::Config config;
+    config.reserve_size = 128 * 1024 * 1024;
+    Cell::Context ctx(config);
+
+    // Allocate buddy-tier
+    void *ptr = ctx.alloc_bytes(64 * 1024, 11);
+    assert(ptr != nullptr);
+    std::memset(ptr, 0x55, 1000); // Fill first 1000 bytes
+
+    // Shrink to sub-cell range
+    void *ptr2 = ctx.realloc_bytes(ptr, 1000, 11);
+    assert(ptr2 != nullptr);
+
+    // Verify data preserved
+    uint8_t *bytes = static_cast<uint8_t *>(ptr2);
+    for (int i = 0; i < 1000; ++i) {
+        assert(bytes[i] == 0x55);
+    }
+
+    ctx.free_bytes(ptr2);
+    printf("  PASSED\n");
+}
+
 // =============================================================================
 // Main
 // =============================================================================
