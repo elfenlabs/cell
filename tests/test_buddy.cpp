@@ -224,6 +224,129 @@ TEST(LargeStress) {
     printf("  PASSED\n");
 }
 
+#include <cstdlib> // For malloc/free
+
+// =============================================================================
+// Realloc Tests (Direct BuddyAllocator)
+// =============================================================================
+
+// Test 9: Realloc - In-place same order
+TEST(ReallocInPlace) {
+    const size_t size = 64 * 1024 * 1024;
+    void *base = std::malloc(size);
+    Cell::BuddyAllocator buddy(base, size);
+
+    // Alloc 40KB (order 16, 64KB block)
+    void *p = buddy.alloc(40 * 1024);
+    assert(p != nullptr);
+
+    // Realloc to 50KB (still order 16)
+    void *p2 = buddy.realloc_bytes(p, 50 * 1024);
+
+    assert(p2 == p && "Should have expanded in-place");
+
+    buddy.free(p2);
+    std::free(base);
+    printf("  PASSED\n");
+}
+
+// Test 10: Realloc - Grow to next order with buddy merge
+TEST(ReallocBuddyMerge) {
+    const size_t size = 64 * 1024 * 1024;
+    void *base = std::malloc(size);
+    Cell::BuddyAllocator buddy(base, size);
+
+    // Alloc two 32KB blocks to get neighbors
+    // Note: We need to ensure they are buddies.
+    // Allocating sequentially usually gives sequential blocks.
+    // If we alloc 32KB, we get a block at offset X.
+    // Next 32KB should be at offset X + 32KB.
+    // Valid 64KB aligned pairs are (0, 32K), (64K, 96K), etc.
+    // Depending on which one we get, we might be the "left" or "right" buddy.
+    // To be safe, we alloc enough to fill a larger block?
+    // Actually, just allocating usually works.
+
+    void *p1 = buddy.alloc(32 * 1024);
+    void *p2 = buddy.alloc(32 * 1024);
+    assert(p1 && p2);
+
+    // Free p2.
+    buddy.free(p2);
+
+    // Fill p1
+    std::memset(p1, 0x77, 32 * 1024);
+
+    // Grow p1 to 40KB (needs 64KB)
+    void *p3 = buddy.realloc_bytes(p1, 40 * 1024);
+    assert(p3 != nullptr);
+
+    // Verify data
+    unsigned char *bytes = static_cast<unsigned char *>(p3);
+    for (int i = 0; i < 32 * 1024; ++i) {
+        assert(bytes[i] == 0x77);
+    }
+
+    buddy.free(p3);
+    std::free(base);
+    printf("  PASSED\n");
+}
+
+// Test 11: Realloc - Fallback (alloc+copy+free)
+TEST(ReallocFallback) {
+    const size_t size = 64 * 1024 * 1024;
+    void *base = std::malloc(size);
+    Cell::BuddyAllocator buddy(base, size);
+
+    // Alloc 32KB
+    void *p1 = buddy.alloc(32 * 1024);
+    // Alloc another to block buddy merge
+    void *p2 = buddy.alloc(32 * 1024);
+
+    // Fill p1
+    std::memset(p1, 0x88, 32 * 1024);
+
+    // Try to grow p1 to 100KB (order 17, 128KB)
+    void *p3 = buddy.realloc_bytes(p1, 100 * 1024);
+    assert(p3 != nullptr);
+    assert(p3 != p1 && "Should have moved (fallback)");
+
+    // Verify data
+    unsigned char *bytes = static_cast<unsigned char *>(p3);
+    for (int i = 0; i < 32 * 1024; ++i) {
+        assert(bytes[i] == 0x88);
+    }
+
+    buddy.free(p2);
+    buddy.free(p3);
+    std::free(base);
+    printf("  PASSED\n");
+}
+
+// Test 12: Realloc - Shrink
+TEST(ReallocShrink) {
+    const size_t size = 64 * 1024 * 1024;
+    void *base = std::malloc(size);
+    Cell::BuddyAllocator buddy(base, size);
+
+    // Alloc 100KB (order 17, 128KB)
+    void *p1 = buddy.alloc(100 * 1024);
+    std::memset(p1, 0x99, 100 * 1024);
+
+    // Shrink to 32KB (order 15)
+    void *p2 = buddy.realloc_bytes(p1, 32 * 1024);
+    assert(p2 != nullptr);
+
+    // Verify data
+    unsigned char *bytes = static_cast<unsigned char *>(p2);
+    for (int i = 0; i < 32 * 1024; ++i) {
+        assert(bytes[i] == 0x99);
+    }
+
+    buddy.free(p2);
+    std::free(base);
+    printf("  PASSED\n");
+}
+
 // =============================================================================
 // Main
 // =============================================================================

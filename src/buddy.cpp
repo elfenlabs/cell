@@ -143,6 +143,97 @@ namespace Cell {
         add_to_free_list(ptr, order);
     }
 
+    void *BuddyAllocator::realloc_bytes(void *ptr, size_t new_size) {
+        // Edge case: nullptr -> behaves like alloc()
+        if (!ptr) {
+            return alloc(new_size);
+        }
+
+        // Edge case: zero size -> behaves like free()
+        if (new_size == 0) {
+            free(ptr);
+            return nullptr;
+        }
+
+        // Get block info
+        BlockHeader *header = get_block_header(ptr);
+        size_t old_order = header->order;
+
+        // Calculate new requirements
+        size_t total_new_size = new_size + sizeof(BlockHeader);
+        size_t new_order = size_to_order(total_new_size);
+
+        // If new size is too large for buddy allocator, we can't handle it here
+        if (new_order > kMaxOrder) {
+            return nullptr;
+        }
+
+        // Optimization 1: In-place expansion (same order)
+        if (new_order == old_order) {
+            return ptr;
+        }
+
+        // Optimization 2: Buddy merge (growing to next order)
+        if (new_order == old_order + 1) {
+            std::lock_guard<std::mutex> lock(m_lock);
+
+            void *internal_ptr = to_internal_ptr(ptr);
+            void *buddy = get_buddy(internal_ptr, old_order);
+
+            // Check bounds
+            if (buddy >= m_base && buddy < static_cast<char *>(m_base) + m_committed) {
+                FreeBlock *buddy_block = static_cast<FreeBlock *>(buddy);
+                bool buddy_is_free = false;
+
+                // Scan free list for this order
+                size_t list_idx = old_order - kMinOrder;
+                for (FreeBlock *b = m_free_lists[list_idx]; b; b = b->next) {
+                    if (b == buddy_block) {
+                        buddy_is_free = true;
+                        break;
+                    }
+                }
+
+                if (buddy_is_free) {
+                    remove_from_free_list(buddy_block, old_order);
+
+                    void *merged_internal = std::min(internal_ptr, buddy);
+
+                    size_t old_block_size = size_t{1} << old_order;
+                    m_allocated += old_block_size;
+
+                    BlockHeader *new_header = static_cast<BlockHeader *>(merged_internal);
+                    new_header->order = static_cast<uint8_t>(new_order);
+                    std::memset(new_header->reserved, 0, sizeof(new_header->reserved));
+
+                    void *new_user_ptr = to_user_ptr(merged_internal);
+
+                    if (new_user_ptr != ptr) {
+                        size_t old_usable = old_block_size - sizeof(BlockHeader);
+                        std::memmove(new_user_ptr, ptr, old_usable);
+                    }
+
+                    return new_user_ptr;
+                }
+            }
+        }
+
+        // Fallback: Allocate + Copy + Free
+        void *new_ptr = alloc(new_size);
+        if (!new_ptr) {
+            return nullptr;
+        }
+
+        size_t old_block_size = size_t{1} << old_order;
+        size_t old_usable = old_block_size - sizeof(BlockHeader);
+        size_t copy_size = std::min(old_usable, new_size);
+
+        std::memcpy(new_ptr, ptr, copy_size);
+        free(ptr);
+
+        return new_ptr;
+    }
+
     // =========================================================================
     // Introspection
     // =========================================================================

@@ -79,6 +79,23 @@ namespace Cell {
          */
         void free(void *ptr);
 
+        /**
+         * @brief Reallocates a buddy block to a new size.
+         *
+         * Behavior:
+         * - If ptr is nullptr, behaves like alloc(new_size)
+         * - If new_size is 0, behaves like free(ptr)
+         * - Attempts in-place expansion if new size fits same order
+         * - Attempts buddy merging if growing to next order
+         * - Falls back to allocate+copy+free if needed
+         * - Data preserved up to min(old_size, new_size)
+         *
+         * @param ptr Pointer from previous alloc/realloc_bytes call
+         * @param new_size New size in bytes
+         * @return Pointer to resized block, or nullptr on failure (old block unchanged)
+         */
+        [[nodiscard]] void *realloc_bytes(void *ptr, size_t new_size);
+
         // =====================================================================
         // Introspection
         // =====================================================================
