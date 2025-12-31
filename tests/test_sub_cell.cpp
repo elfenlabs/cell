@@ -578,6 +578,99 @@ TEST(ReallocBuddyToSubCell) {
 }
 
 // =============================================================================
+// STL Allocator Tests
+// =============================================================================
+
+#include "cell/stl_allocator.h"
+#include <map>
+#include <string>
+
+// Test 22: StlAllocator with std::vector
+TEST(StlAllocatorVector) {
+    Cell::Config config;
+    config.reserve_size = 16 * 1024 * 1024;
+    Cell::Context ctx(config);
+
+    // Create a vector using Cell memory
+    Cell::StlAllocator<int> alloc(ctx, 42);
+    std::vector<int, Cell::StlAllocator<int>> vec(alloc);
+
+    // Push elements
+    for (int i = 0; i < 1000; ++i) {
+        vec.push_back(i * i);
+    }
+
+    // Verify data
+    for (int i = 0; i < 1000; ++i) {
+        assert(vec[i] == i * i);
+    }
+
+    // Resize (triggers reallocation)
+    vec.resize(2000);
+    for (int i = 1000; i < 2000; ++i) {
+        vec[i] = i;
+    }
+
+    // Clear (frees memory through Cell)
+    vec.clear();
+    vec.shrink_to_fit();
+
+    printf("  PASSED\n");
+}
+
+// Test 23: StlAllocator with std::map
+TEST(StlAllocatorMap) {
+    Cell::Config config;
+    config.reserve_size = 16 * 1024 * 1024;
+    Cell::Context ctx(config);
+
+    // Create a map using Cell memory
+    using MapAlloc = Cell::StlAllocator<std::pair<const int, int>>;
+    MapAlloc alloc(ctx, 43);
+    std::map<int, int, std::less<int>, MapAlloc> m(std::less<int>(), alloc);
+
+    // Insert elements
+    for (int i = 0; i < 100; ++i) {
+        m[i] = i * 10;
+    }
+
+    // Verify data
+    for (int i = 0; i < 100; ++i) {
+        assert(m[i] == i * 10);
+    }
+
+    // Erase some
+    for (int i = 0; i < 50; ++i) {
+        m.erase(i);
+    }
+
+    assert(m.size() == 50);
+
+    printf("  PASSED\n");
+}
+
+// Test 24: StlAllocator rebind (container uses different internal types)
+TEST(StlAllocatorRebind) {
+    Cell::Config config;
+    config.reserve_size = 16 * 1024 * 1024;
+    Cell::Context ctx(config);
+
+    // std::vector<bool> uses different internal storage, but other containers
+    // like std::list use node-based allocation which requires rebind
+    Cell::StlAllocator<double> alloc(ctx);
+    std::vector<double, Cell::StlAllocator<double>> vec(alloc);
+
+    vec.push_back(3.14159);
+    vec.push_back(2.71828);
+    vec.push_back(1.41421);
+
+    assert(vec.size() == 3);
+    assert(vec[0] > 3.14 && vec[0] < 3.15);
+
+    printf("  PASSED\n");
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 

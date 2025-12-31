@@ -12,7 +12,7 @@
 
 - [x] Aligned allocation API (`alloc_aligned`)
 - [x] Realloc support (`realloc_bytes`)
-- [ ] STL-compatible allocator wrapper
+- [x] STL-compatible allocator wrapper (`StlAllocator<T>`)
 
 ### Production Hardening
 
