@@ -123,4 +123,9 @@ if(CELL_BUILD_TESTS)
     add_executable(test_instrumentation tests/test_instrumentation.cpp)
     target_link_libraries(test_instrumentation PRIVATE cell)
     add_test(NAME test_instrumentation COMMAND test_instrumentation)
+
+    # Stress tests
+    add_executable(test_stress tests/test_stress.cpp)
+    target_link_libraries(test_stress PRIVATE cell)
+    add_test(NAME test_stress COMMAND test_stress)
 endif()
