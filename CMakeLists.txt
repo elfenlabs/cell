@@ -46,6 +46,13 @@ if(CELL_DEBUG_LEAKS)
     message(STATUS "Cell: Leak detection enabled")
 endif()
 
+# Memory budget limits (compile-time optional)
+option(CELL_ENABLE_BUDGET "Enable memory budget limits" OFF)
+if(CELL_ENABLE_BUDGET)
+    target_compile_definitions(cell PUBLIC CELL_ENABLE_BUDGET)
+    message(STATUS "Cell: Memory budget limits enabled")
+endif()
+
 # Tests (optional, requires GTest)
 option(CELL_BUILD_TESTS "Build unit tests" ON)
 
@@ -99,4 +106,9 @@ if(CELL_BUILD_TESTS)
     add_executable(test_large tests/test_large.cpp)
     target_link_libraries(test_large PRIVATE cell)
     add_test(NAME test_large COMMAND test_large)
+
+    # Memory budget test
+    add_executable(test_budget tests/test_budget.cpp)
+    target_link_libraries(test_budget PRIVATE cell)
+    add_test(NAME test_budget COMMAND test_budget)
 endif()

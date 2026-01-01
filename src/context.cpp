@@ -64,7 +64,39 @@ namespace Cell {
             m_bins[i].total_allocated = 0;
             m_bins[i].current_allocated = 0;
         }
+
+#ifdef CELL_ENABLE_BUDGET
+        m_budget = config.memory_budget;
+#endif
     }
+
+    // =========================================================================
+    // Budget Helpers
+    // =========================================================================
+
+#ifdef CELL_ENABLE_BUDGET
+    bool Context::check_budget(size_t size) {
+        if (m_budget == 0) {
+            return true; // Unlimited
+        }
+        size_t current = m_budget_current.load(std::memory_order_relaxed);
+        if (current + size > m_budget) {
+            if (m_budget_callback) {
+                m_budget_callback(size, m_budget, current);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    void Context::record_budget_alloc(size_t size) {
+        m_budget_current.fetch_add(size, std::memory_order_relaxed);
+    }
+
+    void Context::record_budget_free(size_t size) {
+        m_budget_current.fetch_sub(size, std::memory_order_relaxed);
+    }
+#endif
 
     Context::~Context() {
 #ifdef CELL_DEBUG_LEAKS
@@ -111,6 +143,12 @@ namespace Cell {
         if (size == 0) {
             return nullptr;
         }
+
+#ifdef CELL_ENABLE_BUDGET
+        if (!check_budget(size)) {
+            return nullptr;
+        }
+#endif
 
         // Size routing:
         // <= 8KB: sub-cell bins
@@ -228,6 +266,10 @@ namespace Cell {
         }
 #endif
 
+#ifdef CELL_ENABLE_BUDGET
+        record_budget_alloc(size);
+#endif
+
         return result;
     }
 
@@ -255,6 +297,9 @@ namespace Cell {
 #ifdef CELL_ENABLE_STATS
             m_stats.buddy_frees.fetch_add(1, std::memory_order_relaxed);
 #endif
+#ifdef CELL_ENABLE_BUDGET
+            record_budget_free(m_buddy->get_alloc_size(ptr));
+#endif
             m_buddy->free(ptr);
             return;
         }
@@ -262,6 +307,9 @@ namespace Cell {
         if (m_large_allocs.owns(ptr)) {
 #ifdef CELL_ENABLE_STATS
             m_stats.large_frees.fetch_add(1, std::memory_order_relaxed);
+#endif
+#ifdef CELL_ENABLE_BUDGET
+            record_budget_free(m_large_allocs.get_alloc_size(ptr));
 #endif
             m_large_allocs.free(ptr);
             return;
@@ -309,9 +357,6 @@ namespace Cell {
             // Adjust pointer to original allocation
             ptr = front_guard;
         }
-#elif !defined(CELL_DEBUG_LEAKS)
-        // Without leak tracking, we can't know the original size, so skip guard checking
-        (void)alloc_size;
 #endif
 
         CellHeader *header = get_header(ptr);
@@ -323,6 +368,9 @@ namespace Cell {
             m_stats.record_free(kCellSize, tag);
             m_stats.cell_frees.fetch_add(1, std::memory_order_relaxed);
 #endif
+#ifdef CELL_ENABLE_BUDGET
+            record_budget_free(kCellSize);
+#endif
             free_cell(reinterpret_cast<CellData *>(header));
         } else {
             // Sub-cell allocation
@@ -330,6 +378,10 @@ namespace Cell {
             size_t block_size = kSizeClasses[header->size_class];
             m_stats.record_free(block_size, tag);
             m_stats.subcell_frees.fetch_add(1, std::memory_order_relaxed);
+#endif
+#ifdef CELL_ENABLE_BUDGET
+            size_t budget_block_size = kSizeClasses[header->size_class];
+            record_budget_free(budget_block_size);
 #endif
             free_to_bin(ptr, header);
         }

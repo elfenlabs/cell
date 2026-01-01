@@ -109,6 +109,13 @@ namespace Cell {
          */
         [[nodiscard]] size_t allocation_count() const;
 
+        /**
+         * @brief Returns the allocated size for a pointer.
+         * @param ptr User pointer from alloc()
+         * @return Allocation size, or 0 if not found
+         */
+        [[nodiscard]] size_t get_alloc_size(void *ptr) const;
+
     private:
         /**
          * @brief Metadata for a large allocation.

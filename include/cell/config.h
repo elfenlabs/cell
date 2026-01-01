@@ -93,6 +93,16 @@ namespace Cell {
          * Default: 16GB. Physical RAM is committed lazily.
          */
         size_t reserve_size = 16ULL * 1024 * 1024 * 1024;
+
+#ifdef CELL_ENABLE_BUDGET
+        /**
+         * @brief Maximum bytes this Context may allocate.
+         *
+         * When the budget would be exceeded, allocation returns nullptr.
+         * Default: 0 (unlimited).
+         */
+        size_t memory_budget = 0;
+#endif
     };
 
 }

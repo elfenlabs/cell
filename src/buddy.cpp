@@ -252,6 +252,14 @@ namespace Cell {
 
     size_t BuddyAllocator::superblock_count() const { return m_superblock_count; }
 
+    size_t BuddyAllocator::get_alloc_size(void *ptr) const {
+        if (!owns(ptr)) {
+            return 0;
+        }
+        BlockHeader *header = get_block_header(ptr);
+        return size_t{1} << header->order;
+    }
+
     // =========================================================================
     // Internal Methods
     // =========================================================================

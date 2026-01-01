@@ -212,4 +212,13 @@ namespace Cell {
         return m_allocs.size();
     }
 
+    size_t LargeAllocRegistry::get_alloc_size(void *ptr) const {
+        std::lock_guard<std::mutex> lock(m_lock);
+        auto it = m_allocs.find(ptr);
+        if (it == m_allocs.end()) {
+            return 0;
+        }
+        return it->second.size;
+    }
+
 }

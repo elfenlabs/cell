@@ -17,7 +17,7 @@
 ### Production Hardening
 
 - [x] Thread safety audit
-- [ ] Memory budget limits
+- [x] Memory budget limits
 - [ ] Allocation callbacks for instrumentation
 
 ---

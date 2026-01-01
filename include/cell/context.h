@@ -17,6 +17,16 @@
 
 namespace Cell {
 
+#ifdef CELL_ENABLE_BUDGET
+    /**
+     * @brief Callback invoked when an allocation would exceed the budget.
+     * @param requested Bytes requested by this allocation.
+     * @param budget Current budget limit.
+     * @param current Currently allocated bytes.
+     */
+    using BudgetCallback = void (*)(size_t requested, size_t budget, size_t current);
+#endif
+
     /**
      * @brief A memory environment owning a reserved virtual address range.
      *
@@ -217,6 +227,28 @@ namespace Cell {
 #endif
 
         // =====================================================================
+        // Budget API (compile-time optional via CELL_ENABLE_BUDGET)
+        // =====================================================================
+
+#ifdef CELL_ENABLE_BUDGET
+        /**
+         * @brief Sets the memory budget for this context.
+         * @param bytes Maximum bytes to allow. 0 = unlimited.
+         */
+        void set_budget(size_t bytes) { m_budget = bytes; }
+
+        /**
+         * @brief Returns the current budget limit.
+         */
+        [[nodiscard]] size_t get_budget() const { return m_budget; }
+
+        /**
+         * @brief Sets a callback for when allocations exceed budget.
+         */
+        void set_budget_callback(BudgetCallback cb) { m_budget_callback = cb; }
+#endif
+
+        // =====================================================================
         // Debug Features (compile-time optional)
         // =====================================================================
 
@@ -305,6 +337,16 @@ namespace Cell {
 #ifdef CELL_DEBUG_LEAKS
         mutable std::unordered_map<void *, DebugAllocation> m_live_allocs;
         mutable std::mutex m_debug_mutex;
+#endif
+
+#ifdef CELL_ENABLE_BUDGET
+        size_t m_budget = 0;
+        std::atomic<size_t> m_budget_current{0};
+        BudgetCallback m_budget_callback = nullptr;
+
+        bool check_budget(size_t size);
+        void record_budget_alloc(size_t size);
+        void record_budget_free(size_t size);
 #endif
     };
 

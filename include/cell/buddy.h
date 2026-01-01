@@ -116,6 +116,13 @@ namespace Cell {
         [[nodiscard]] size_t bytes_committed() const;
 
         /**
+         * @brief Returns the allocated size for a pointer.
+         * @param ptr User pointer from alloc()
+         * @return Block size (power of 2), or 0 if not a valid allocation
+         */
+        [[nodiscard]] size_t get_alloc_size(void *ptr) const;
+
+        /**
          * @brief Returns number of superblocks in use.
          */
         [[nodiscard]] size_t superblock_count() const;
