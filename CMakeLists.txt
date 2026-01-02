@@ -161,6 +161,7 @@ if(CELL_BUILD_BENCHMARKS)
         benchmarks/bench_baseline.cpp
         benchmarks/bench_threading.cpp
         benchmarks/bench_abstractions.cpp
+        benchmarks/bench_locality.cpp
     )
 
     set(BENCHMARK_LIBS
