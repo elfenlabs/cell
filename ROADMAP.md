@@ -34,5 +34,6 @@
 | 0.6.0   | Memory statistics ✓ |
 | 0.7.0   | TLS bin cache + Memory decommit ✓ |
 | 0.8.0   | Debug features (guards, stack traces, leaks) ✓ |
-| **0.9.0** | **Aligned allocation + Realloc ✓** ← Current |
-| 1.0.0   | Production-ready with all API enhancements |
+| **0.9.0** | **Aligned allocation + Realloc ✓** |
+| **1.0.0** | **Benchmark suite + Production hardening** ← Current |
+

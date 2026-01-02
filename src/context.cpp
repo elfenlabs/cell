@@ -183,12 +183,37 @@ namespace Cell {
         size_t alloc_size = size;
 #endif
 
-        if (alloc_size <= kMaxSubCellSize) {
-            // Sub-cell allocation
-            if (!m_allocator)
+        if (CELL_LIKELY(alloc_size <= kMaxSubCellSize)) {
+            // Sub-cell allocation - hot path
+            if (CELL_UNLIKELY(!m_allocator))
                 return nullptr;
+
+            // Fast path: common sizes with default alignment go through TLS cache
+            // directly, avoiding function call overhead
+#if !defined(CELL_DEBUG_GUARDS) && !defined(CELL_DEBUG_LEAKS) && !defined(CELL_ENABLE_BUDGET)
+            if (CELL_LIKELY(alignment <= 8 && alloc_size <= 128)) {
+                // Use O(1) size class lookup
+                uint8_t bin_index = get_size_class_fast(alloc_size);
+
+                // Inline TLS cache check for maximum speed
+                TlsBinCache &cache = t_bin_cache[bin_index];
+                if (CELL_LIKELY(cache.count > 0)) {
+                    result = cache.blocks[--cache.count];
+#ifdef CELL_ENABLE_STATS
+                    m_stats.record_alloc(kSizeClasses[bin_index], tag);
+                    m_stats.subcell_allocs.fetch_add(1, std::memory_order_relaxed);
+#endif
+#ifdef CELL_ENABLE_INSTRUMENTATION
+                    invoke_alloc_callback(result, size, tag, true);
+#endif
+                    return result;
+                }
+                // TLS cache empty - fall through to slow path
+            }
+#endif
+
             uint8_t bin_index = get_size_class(alloc_size, alignment);
-            if (bin_index == kFullCellMarker) {
+            if (CELL_UNLIKELY(bin_index == kFullCellMarker)) {
                 // Rare edge case: alignment pushes us to full cell
                 CellData *cell = alloc_cell(tag);
                 if (cell) {
@@ -851,10 +876,10 @@ namespace Cell {
 #endif
 
         // TLS fast path for hot bins (0-3: 16B, 32B, 64B, 128B)
-        if (bin_index < kTlsBinCacheCount) {
+        if (CELL_LIKELY(bin_index < kTlsBinCacheCount)) {
             TlsBinCache &cache = t_bin_cache[bin_index];
-            if (!cache.is_full()) {
-                cache.push(static_cast<FreeBlock *>(ptr));
+            if (CELL_LIKELY(cache.count < kTlsBinCacheCapacity)) {
+                cache.blocks[cache.count++] = static_cast<FreeBlock *>(ptr);
                 return;
             }
         }

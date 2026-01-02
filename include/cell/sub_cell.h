@@ -54,6 +54,60 @@ namespace Cell {
         return kFullCellMarker;
     }
 
+// Branch hint macros for performance-critical paths
+#if defined(__GNUC__) || defined(__clang__)
+#define CELL_LIKELY(x) __builtin_expect(!!(x), 1)
+#define CELL_UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define CELL_LIKELY(x) (x)
+#define CELL_UNLIKELY(x) (x)
+#endif
+
+    /**
+     * @brief Fast O(1) size class lookup using bit manipulation.
+     *
+     * Uses count-leading-zeros to find the bin in constant time.
+     * Only valid for power-of-2 size classes.
+     *
+     * @param size Size of the allocation (will be rounded up to min).
+     * @return Bin index (0-9), or kFullCellMarker if too large.
+     */
+    inline uint8_t get_size_class_fast(size_t size) {
+        // Clamp to minimum
+        if (CELL_UNLIKELY(size < kMinBlockSize)) {
+            size = kMinBlockSize;
+        }
+
+        // Too large for sub-cell
+        if (CELL_UNLIKELY(size > kMaxSubCellSize)) {
+            return kFullCellMarker;
+        }
+
+        // Round up to next power of 2
+        // Formula: ceil(log2(size)) gives us the order
+        // For power-of-2 sizes: bin = log2(size) - 4  (since 16 = 2^4 is bin 0)
+        size_t v = size - 1; // Handle exact powers correctly
+
+#if defined(__GNUC__) || defined(__clang__)
+        // Use builtin for speed: 63 - clz gives us floor(log2(v))
+        // We want ceil(log2(size)) = floor(log2(size-1)) + 1 for non-powers
+        unsigned order = (v == 0) ? 0 : (64 - __builtin_clzll(v));
+#else
+        // Fallback: bit scan
+        unsigned order = 0;
+        while (v >>= 1)
+            ++order;
+        ++order;
+#endif
+
+        // Clamp minimum to 4 (16 bytes = 2^4)
+        if (order < 4)
+            order = 4;
+
+        // Bin index = order - 4 (since bin 0 = 16 = 2^4)
+        return static_cast<uint8_t>(order - 4);
+    }
+
     /**
      * @brief Calculates how many blocks fit in a cell for a given size class.
      *

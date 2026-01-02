@@ -129,3 +129,56 @@ if(CELL_BUILD_TESTS)
     target_link_libraries(test_stress PRIVATE cell)
     add_test(NAME test_stress COMMAND test_stress)
 endif()
+
+# Benchmarks (optional, requires Google Benchmark)
+option(CELL_BUILD_BENCHMARKS "Build performance benchmarks" OFF)
+
+if(CELL_BUILD_BENCHMARKS)
+    # Try to find system-installed Google Benchmark, otherwise fetch it
+    find_package(benchmark QUIET)
+
+    if(NOT benchmark_FOUND)
+        message(STATUS "Cell: Google Benchmark not found, fetching from GitHub...")
+        include(FetchContent)
+        FetchContent_Declare(
+            benchmark
+            GIT_REPOSITORY https://github.com/google/benchmark.git
+            GIT_TAG v1.8.3
+        )
+        # Disable benchmark tests to speed up build
+        set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+        set(BENCHMARK_ENABLE_GTEST_TESTS OFF CACHE BOOL "" FORCE)
+        FetchContent_MakeAvailable(benchmark)
+    endif()
+
+    # Check for jemalloc
+    find_library(JEMALLOC_LIB jemalloc)
+    find_path(JEMALLOC_INCLUDE jemalloc/jemalloc.h)
+
+    set(BENCHMARK_SOURCES
+        benchmarks/bench_main.cpp
+        benchmarks/bench_alloc_patterns.cpp
+        benchmarks/bench_baseline.cpp
+        benchmarks/bench_threading.cpp
+        benchmarks/bench_abstractions.cpp
+    )
+
+    set(BENCHMARK_LIBS
+        cell
+        benchmark::benchmark
+    )
+
+    add_executable(cell_benchmarks ${BENCHMARK_SOURCES})
+
+    target_link_libraries(cell_benchmarks PRIVATE ${BENCHMARK_LIBS})
+
+    # Ensure benchmarks run with optimizations
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(cell_benchmarks PRIVATE -O3 -DNDEBUG)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+        target_compile_options(cell_benchmarks PRIVATE /O2 /DNDEBUG)
+    endif()
+
+    message(STATUS "Cell: Benchmarks enabled")
+endif()
+
