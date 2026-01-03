@@ -89,7 +89,10 @@ TEST(BudgetCallback) {
     void *p2 = ctx.alloc_bytes(200);
     assert(p2 == nullptr && "Allocation should fail");
     assert(g_callback_invoked && "Callback should be invoked");
-    assert(g_callback_requested == 200 && "Callback should receive requested size");
+    // Note: callback receives the ROUNDED/BUDGET size (256 for size class containing 200),
+    // not the original requested size. This ensures consistent budget enforcement
+    // where check and record use the same size.
+    assert(g_callback_requested == 256 && "Callback should receive rounded budget size");
     assert(g_callback_budget == 512 && "Callback should receive budget");
 
     printf("  Callback: requested=%zu, budget=%zu, current=%zu\n", g_callback_requested,
@@ -124,8 +127,7 @@ TEST(BudgetUnlimited) {
 }
 
 // Test 4: Budget with large allocations
-// Note: Budget check uses requested size, but tracking uses rounded size.
-// This means you can slightly exceed budget if the rounded size is larger.
+// Budget check and tracking both use rounded size for consistent enforcement.
 TEST(BudgetLargeAllocs) {
     Cell::Config config;
     config.reserve_size = 128 * 1024 * 1024;

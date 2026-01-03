@@ -20,11 +20,18 @@ namespace Cell {
 #ifdef CELL_ENABLE_BUDGET
     /**
      * @brief Callback invoked when an allocation would exceed the budget.
-     * @param requested Bytes requested by this allocation.
+     *
+     * @param allocation_size Actual bytes that would be allocated (rounded to
+     *        size class for sub-cell, or power-of-2 for buddy). This matches
+     *        the size used for budget accounting, not the raw requested size.
      * @param budget Current budget limit.
-     * @param current Currently allocated bytes.
+     * @param current Currently allocated bytes (tracked at rounded sizes).
+     *
+     * @note Budget enforcement uses rounded allocation sizes throughout to
+     *       ensure the budget check and accounting are consistent. The caller
+     *       should size their budget with this rounding in mind.
      */
-    using BudgetCallback = void (*)(size_t requested, size_t budget, size_t current);
+    using BudgetCallback = void (*)(size_t allocation_size, size_t budget, size_t current);
 #endif
 
 #ifdef CELL_ENABLE_INSTRUMENTATION

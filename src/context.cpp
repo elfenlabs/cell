@@ -165,12 +165,6 @@ namespace Cell {
             return nullptr;
         }
 
-#ifdef CELL_ENABLE_BUDGET
-        if (!check_budget(size)) {
-            return nullptr;
-        }
-#endif
-
         // Size routing:
         // <= 8KB: sub-cell bins
         // <= 16KB (usable cell space): full cell
@@ -179,9 +173,6 @@ namespace Cell {
 
         size_t usable_cell_size = kCellSize - kBlockStartOffset;
         void *result = nullptr;
-#ifdef CELL_ENABLE_BUDGET
-        size_t budget_size = 0; // Track actual allocated size for budget
-#endif
 
 #ifdef CELL_DEBUG_GUARDS
         // For sub-cell allocations that fit with guards, add space for guard bytes
@@ -193,6 +184,30 @@ namespace Cell {
         }
 #else
         size_t alloc_size = size;
+#endif
+
+#ifdef CELL_ENABLE_BUDGET
+        // Calculate budget_size upfront so check_budget uses the same rounded size
+        // that record_budget_alloc will use, preventing budget overruns from rounding
+        size_t budget_size = 0;
+        if (alloc_size <= kMaxSubCellSize) {
+            uint8_t bin_index = get_size_class(alloc_size, alignment);
+            if (bin_index == kFullCellMarker) {
+                budget_size = kCellSize;
+            } else {
+                budget_size = kSizeClasses[bin_index];
+            }
+        } else if (size <= usable_cell_size) {
+            budget_size = kCellSize;
+        } else {
+            // Large allocation - alloc_large handles its own budget check
+            budget_size = 0;
+        }
+
+        // Check budget with actual rounded size (skip if alloc_large will handle it)
+        if (budget_size > 0 && !check_budget(budget_size)) {
+            return nullptr;
+        }
 #endif
 
         if (CELL_LIKELY(alloc_size <= kMaxSubCellSize)) {
@@ -242,9 +257,6 @@ namespace Cell {
                     m_stats.cell_allocs.fetch_add(1, std::memory_order_relaxed);
                 }
 #endif
-#ifdef CELL_ENABLE_BUDGET
-                budget_size = kCellSize;
-#endif
             } else {
                 result = alloc_from_bin(bin_index, tag);
 #ifdef CELL_ENABLE_STATS
@@ -252,9 +264,6 @@ namespace Cell {
                     m_stats.record_alloc(kSizeClasses[bin_index], tag);
                     m_stats.subcell_allocs.fetch_add(1, std::memory_order_relaxed);
                 }
-#endif
-#ifdef CELL_ENABLE_BUDGET
-                budget_size = kSizeClasses[bin_index];
 #endif
             }
         } else if (size <= usable_cell_size) {
@@ -276,9 +285,6 @@ namespace Cell {
                 m_stats.cell_allocs.fetch_add(1, std::memory_order_relaxed);
             }
 #endif
-#ifdef CELL_ENABLE_BUDGET
-            budget_size = kCellSize;
-#endif
         } else {
             // Large allocation (buddy or direct OS)
             result = alloc_large(size, tag);
@@ -286,11 +292,6 @@ namespace Cell {
             will_have_guards = false;
 #endif
             // Stats and budget tracking handled in alloc_large
-#ifdef CELL_ENABLE_BUDGET
-            // For buddy, actual size is power-of-2 rounded; for large, it's the requested size
-            // alloc_large handles its own budget tracking
-            budget_size = 0; // alloc_large records its own budget
-#endif
         }
 
         if (!result) {
@@ -852,6 +853,34 @@ namespace Cell {
 
         void *result = nullptr;
 
+#ifdef CELL_ENABLE_BUDGET
+        // Calculate budget size upfront for check_budget
+        // Buddy allocations round to power-of-2 including 8-byte header
+        // Large allocations get page-rounded sizes
+        size_t budget_size = 0;
+        if (size <= BuddyAllocator::kMaxBlockSize && m_buddy) {
+            // Calculate buddy rounded size (power-of-2 >= size + 8 byte header)
+            size_t total = size + 8; // header
+            if (total < BuddyAllocator::kMinBlockSize) {
+                budget_size = BuddyAllocator::kMinBlockSize;
+            } else {
+                // Round up to next power of 2
+                budget_size = BuddyAllocator::kMinBlockSize;
+                while (budget_size < total && budget_size < BuddyAllocator::kMaxBlockSize) {
+                    budget_size <<= 1;
+                }
+            }
+        } else {
+            // Large allocation - page-aligned, approximate as requested size
+            // (record_budget_alloc will use get_alloc_size for actual)
+            budget_size = size;
+        }
+
+        if (!check_budget(budget_size)) {
+            return nullptr;
+        }
+#endif
+
         // Route: <= 2MB to buddy, > 2MB to direct OS
         if (size <= BuddyAllocator::kMaxBlockSize) {
             if (m_buddy) {
@@ -938,6 +967,31 @@ namespace Cell {
             return nullptr;
         }
 
+#ifdef CELL_ENABLE_BUDGET
+        // Calculate budget size upfront for check_budget
+        // Similar logic to alloc_large: buddy rounds to power-of-2, large is page-aligned
+        size_t budget_size = 0;
+        if (size <= BuddyAllocator::kMaxBlockSize && m_buddy && alignment <= 8) {
+            // Will use buddy path - calculate power-of-2 rounded size
+            size_t total = size + 8; // header
+            if (total < BuddyAllocator::kMinBlockSize) {
+                budget_size = BuddyAllocator::kMinBlockSize;
+            } else {
+                budget_size = BuddyAllocator::kMinBlockSize;
+                while (budget_size < total && budget_size < BuddyAllocator::kMaxBlockSize) {
+                    budget_size <<= 1;
+                }
+            }
+        } else {
+            // Will use large allocation path - approximate as requested size
+            budget_size = size;
+        }
+
+        if (!check_budget(budget_size)) {
+            return nullptr;
+        }
+#endif
+
         // For buddy allocations: check if natural power-of-2 alignment is sufficient
         if (size <= BuddyAllocator::kMaxBlockSize && m_buddy) {
             // Calculate the order (and thus natural alignment) for this size
@@ -971,6 +1025,16 @@ namespace Cell {
                     m_stats.buddy_allocs.fetch_add(1, std::memory_order_relaxed);
                 }
 #endif
+#ifdef CELL_ENABLE_INSTRUMENTATION
+                if (result) {
+                    invoke_alloc_callback(result, size, tag, true);
+                }
+#endif
+#ifdef CELL_ENABLE_BUDGET
+                if (result) {
+                    record_budget_alloc(m_buddy->get_alloc_size(result));
+                }
+#endif
                 return result;
             }
             // For higher alignment requirements, fall through to LargeAllocRegistry
@@ -989,6 +1053,11 @@ namespace Cell {
 #ifdef CELL_ENABLE_INSTRUMENTATION
         if (result) {
             invoke_alloc_callback(result, size, tag, true);
+        }
+#endif
+#ifdef CELL_ENABLE_BUDGET
+        if (result) {
+            record_budget_alloc(m_large_allocs.get_alloc_size(result));
         }
 #endif
         return result;
