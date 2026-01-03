@@ -24,6 +24,38 @@
 
 namespace Cell {
 
+    // =========================================================================
+    // Bit Manipulation Helpers
+    // =========================================================================
+
+    /**
+     * @brief Rounds up to the next power of 2 using O(1) bit manipulation.
+     * @param v Value to round up (must be > 0).
+     * @return Next power of 2 >= v.
+     */
+    CELL_FORCE_INLINE size_t next_power_of_2(size_t v) {
+        if (v == 0)
+            return 1;
+        --v;
+#if defined(__GNUC__) || defined(__clang__)
+        // Use count-leading-zeros for O(1) computation
+        return 1ULL << (64 - __builtin_clzll(v | 1));
+#elif defined(_MSC_VER)
+        unsigned long idx;
+        _BitScanReverse64(&idx, v | 1);
+        return 1ULL << (idx + 1);
+#else
+        // Fallback: bit smearing
+        v |= v >> 1;
+        v |= v >> 2;
+        v |= v >> 4;
+        v |= v >> 8;
+        v |= v >> 16;
+        v |= v >> 32;
+        return v + 1;
+#endif
+    }
+
     Context::Context(const Config &config) : m_reserved_size(config.reserve_size) {
         // Split reserved space: half for cells, half for buddy
         // Both need to be reasonably sized for their use cases
@@ -387,6 +419,10 @@ namespace Cell {
                 // AVX2: Copy 4 pointers (32 bytes) at a time
                 while (take >= 4) {
                     cache.count -= 4;
+                    // Prefetch next batch of cache blocks for better cache performance
+                    if (cache.count >= 4) {
+                        __builtin_prefetch(&cache.blocks[cache.count - 4], 0, 3);
+                    }
                     __m256i ptrs = _mm256_loadu_si256(
                         reinterpret_cast<const __m256i *>(&cache.blocks[cache.count]));
                     _mm256_storeu_si256(reinterpret_cast<__m256i *>(&out_ptrs[allocated]), ptrs);
@@ -397,6 +433,10 @@ namespace Cell {
                 // SSE2: Copy 2 pointers (16 bytes) at a time
                 while (take >= 2) {
                     cache.count -= 2;
+                    // Prefetch next batch of cache blocks for better cache performance
+                    if (cache.count >= 2) {
+                        __builtin_prefetch(&cache.blocks[cache.count - 2], 0, 3);
+                    }
                     __m128i ptrs = _mm_loadu_si128(
                         reinterpret_cast<const __m128i *>(&cache.blocks[cache.count]));
                     _mm_storeu_si128(reinterpret_cast<__m128i *>(&out_ptrs[allocated]), ptrs);
@@ -868,10 +908,10 @@ namespace Cell {
             if (total < BuddyAllocator::kMinBlockSize) {
                 budget_size = BuddyAllocator::kMinBlockSize;
             } else {
-                // Round up to next power of 2
-                budget_size = BuddyAllocator::kMinBlockSize;
-                while (budget_size < total && budget_size < BuddyAllocator::kMaxBlockSize) {
-                    budget_size <<= 1;
+                // O(1) power-of-2 rounding using bit manipulation
+                budget_size = next_power_of_2(total);
+                if (budget_size > BuddyAllocator::kMaxBlockSize) {
+                    budget_size = BuddyAllocator::kMaxBlockSize;
                 }
             }
         } else {
@@ -981,9 +1021,10 @@ namespace Cell {
             if (total < BuddyAllocator::kMinBlockSize) {
                 budget_size = BuddyAllocator::kMinBlockSize;
             } else {
-                budget_size = BuddyAllocator::kMinBlockSize;
-                while (budget_size < total && budget_size < BuddyAllocator::kMaxBlockSize) {
-                    budget_size <<= 1;
+                // O(1) power-of-2 rounding using bit manipulation
+                budget_size = next_power_of_2(total);
+                if (budget_size > BuddyAllocator::kMaxBlockSize) {
+                    budget_size = BuddyAllocator::kMaxBlockSize;
                 }
             }
         } else {
@@ -1005,10 +1046,10 @@ namespace Cell {
                 total_size = BuddyAllocator::kMinBlockSize;
             }
 
-            // Round up to next power of 2 to find actual block size
-            size_t block_size = BuddyAllocator::kMinBlockSize;
-            while (block_size < total_size && block_size < BuddyAllocator::kMaxBlockSize) {
-                block_size <<= 1;
+            // O(1) power-of-2 rounding for block size
+            size_t block_size = next_power_of_2(total_size);
+            if (block_size > BuddyAllocator::kMaxBlockSize) {
+                block_size = BuddyAllocator::kMaxBlockSize;
             }
 
             // Buddy blocks are naturally aligned to their size.
