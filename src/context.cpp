@@ -179,6 +179,9 @@ namespace Cell {
 
         size_t usable_cell_size = kCellSize - kBlockStartOffset;
         void *result = nullptr;
+#ifdef CELL_ENABLE_BUDGET
+        size_t budget_size = 0; // Track actual allocated size for budget
+#endif
 
 #ifdef CELL_DEBUG_GUARDS
         // For sub-cell allocations that fit with guards, add space for guard bytes
@@ -239,6 +242,9 @@ namespace Cell {
                     m_stats.cell_allocs.fetch_add(1, std::memory_order_relaxed);
                 }
 #endif
+#ifdef CELL_ENABLE_BUDGET
+                budget_size = kCellSize;
+#endif
             } else {
                 result = alloc_from_bin(bin_index, tag);
 #ifdef CELL_ENABLE_STATS
@@ -246,6 +252,9 @@ namespace Cell {
                     m_stats.record_alloc(kSizeClasses[bin_index], tag);
                     m_stats.subcell_allocs.fetch_add(1, std::memory_order_relaxed);
                 }
+#endif
+#ifdef CELL_ENABLE_BUDGET
+                budget_size = kSizeClasses[bin_index];
 #endif
             }
         } else if (size <= usable_cell_size) {
@@ -267,13 +276,21 @@ namespace Cell {
                 m_stats.cell_allocs.fetch_add(1, std::memory_order_relaxed);
             }
 #endif
+#ifdef CELL_ENABLE_BUDGET
+            budget_size = kCellSize;
+#endif
         } else {
             // Large allocation (buddy or direct OS)
             result = alloc_large(size, tag);
 #ifdef CELL_DEBUG_GUARDS
             will_have_guards = false;
 #endif
-            // Stats tracking handled in alloc_large
+            // Stats and budget tracking handled in alloc_large
+#ifdef CELL_ENABLE_BUDGET
+            // For buddy, actual size is power-of-2 rounded; for large, it's the requested size
+            // alloc_large handles its own budget tracking
+            budget_size = 0; // alloc_large records its own budget
+#endif
         }
 
         if (!result) {
@@ -313,7 +330,9 @@ namespace Cell {
 #endif
 
 #ifdef CELL_ENABLE_BUDGET
-        record_budget_alloc(size);
+        if (budget_size > 0) {
+            record_budget_alloc(budget_size);
+        }
 #endif
 
 #ifdef CELL_ENABLE_INSTRUMENTATION
@@ -431,6 +450,18 @@ namespace Cell {
             // Get size class from first pointer
             CellHeader *first_header = get_header(ptrs[0]);
             uint8_t size_class = first_header->size_class;
+
+#ifndef NDEBUG
+            // Validate homogeneous batch - mixed sizes corrupt freelists
+            for (size_t i = 1; i < count; ++i) {
+                auto iptr = reinterpret_cast<uintptr_t>(ptrs[i]);
+                if (iptr >= base && iptr < base + m_reserved_size) {
+                    CellHeader *h = get_header(ptrs[i]);
+                    assert(h->size_class == size_class &&
+                           "free_batch requires all pointers to have same size class");
+                }
+            }
+#endif
 
             if (CELL_LIKELY(size_class < kTlsBinCacheCount)) {
                 TlsBinCache &cache = t_bin_cache[size_class];
@@ -717,7 +748,9 @@ namespace Cell {
             void *new_ptr = alloc_bytes(new_size, tag);
             if (!new_ptr)
                 return nullptr;
-            std::memcpy(new_ptr, ptr, new_size);
+            // Copy min(old_usable, new_size) to avoid reading past old allocation
+            size_t old_usable = m_buddy->get_alloc_size(ptr) - 8; // Subtract header
+            std::memcpy(new_ptr, ptr, std::min(old_usable, new_size));
             m_buddy->free(ptr);
             return new_ptr;
         }
@@ -762,7 +795,9 @@ namespace Cell {
             void *new_ptr = alloc_bytes(new_size, tag);
             if (!new_ptr)
                 return nullptr;
-            std::memcpy(new_ptr, ptr, new_size);
+            // Copy min(old_size, new_size) to avoid reading past old allocation
+            size_t old_size = m_large_allocs.get_alloc_size(ptr);
+            std::memcpy(new_ptr, ptr, std::min(old_size, new_size));
             m_large_allocs.free(ptr);
             return new_ptr;
         }
@@ -833,6 +868,12 @@ namespace Cell {
                     invoke_alloc_callback(result, size, tag, true);
                 }
 #endif
+#ifdef CELL_ENABLE_BUDGET
+                if (result) {
+                    // Use actual rounded size for budget
+                    record_budget_alloc(m_buddy->get_alloc_size(result));
+                }
+#endif
                 return result;
             }
             // Fallback to large alloc if buddy not initialized
@@ -849,6 +890,11 @@ namespace Cell {
 #ifdef CELL_ENABLE_INSTRUMENTATION
         if (result) {
             invoke_alloc_callback(result, size, tag, true);
+        }
+#endif
+#ifdef CELL_ENABLE_BUDGET
+        if (result) {
+            record_budget_alloc(m_large_allocs.get_alloc_size(result));
         }
 #endif
         return result;
@@ -915,7 +961,9 @@ namespace Cell {
             //
             // If requested alignment <= block_size and block_size >= alignment,
             // we can use buddy. Otherwise, use LargeAllocRegistry.
-            if (alignment <= block_size) {
+            // Buddy user pointers are offset by 8-byte header from block start.
+            // Only 8-byte alignment is guaranteed regardless of block size.
+            if (alignment <= 8) {
                 void *result = m_buddy->alloc(size);
 #ifdef CELL_ENABLE_STATS
                 if (result) {

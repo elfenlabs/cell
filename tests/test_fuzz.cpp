@@ -78,6 +78,7 @@ inline bool verify_pattern(const void *ptr, size_t size, uint64_t seed) {
 struct AllocRecord {
     void *ptr;
     size_t size;
+    size_t pattern_size; ///< How many bytes were actually filled with pattern
     uint64_t pattern_seed;
 };
 
@@ -120,7 +121,7 @@ TEST(RandomSizeFuzzing) {
         if (p) {
             uint64_t seed = rng();
             fill_pattern(p, size, seed);
-            live.push_back({p, size, seed});
+            live.push_back({p, size, size, seed});
         }
 
         // Randomly free some allocations
@@ -174,7 +175,7 @@ TEST(CrossTierTransitionFuzzing) {
                 // Only fill up to 1KB to avoid performance issues with large allocs
                 size_t fill_size = std::min(size, size_t{1024});
                 fill_pattern(p, fill_size, seed);
-                live.push_back({p, fill_size, seed}); // Store fill_size for verification
+                live.push_back({p, fill_size, fill_size, seed}); // Store fill_size for verification
             }
         }
 
@@ -226,7 +227,7 @@ TEST(ConcurrentFuzzing) {
                     if (p) {
                         uint64_t seed = rng();
                         fill_pattern(p, size, seed);
-                        local_live.push_back({p, size, seed});
+                        local_live.push_back({p, size, size, seed});
                         success_count.fetch_add(1, std::memory_order_relaxed);
                     }
                 } else {
@@ -361,7 +362,7 @@ TEST(AlignmentFuzzing) {
 
             uint64_t seed = rng();
             fill_pattern(p, std::min(size, size_t{4096}), seed); // Only fill first 4KB
-            live.push_back({p, size, seed});
+            live.push_back({p, size, std::min(size, size_t{4096}), seed});
         }
 
         // Random free
@@ -462,15 +463,16 @@ TEST(LongRunningStabilityFuzzing) {
             void *p = ctx.alloc_bytes(size);
             if (p) {
                 uint64_t seed = rng();
-                fill_pattern(p, std::min(size, size_t{256}), seed);
-                live.push_back({p, size, seed});
+                size_t pattern_size = std::min(size, size_t{256});
+                fill_pattern(p, pattern_size, seed);
+                live.push_back({p, size, pattern_size, seed});
                 peak_live = std::max(peak_live, static_cast<int>(live.size()));
             }
         } else if (action < 80) {
             // Free (30%)
             size_t idx = rng() % live.size();
             auto &rec = live[idx];
-            size_t check = std::min(rec.size, size_t{256});
+            size_t check = std::min(rec.pattern_size, size_t{256});
             assert(verify_pattern(rec.ptr, check, rec.pattern_seed) && "Memory corruption!");
             ctx.free_bytes(rec.ptr);
             live.erase(live.begin() + idx);
@@ -478,11 +480,14 @@ TEST(LongRunningStabilityFuzzing) {
             // Realloc (15%)
             size_t idx = rng() % live.size();
             auto &rec = live[idx];
+            size_t old_size = rec.size;
             size_t new_size = 1 + (rng() % 100000);
             void *new_ptr = ctx.realloc_bytes(rec.ptr, new_size);
             if (new_ptr) {
                 rec.ptr = new_ptr;
                 rec.size = new_size;
+                // Pattern is only preserved up to min(old_size, new_size)
+                rec.pattern_size = std::min(rec.pattern_size, std::min(old_size, new_size));
             }
         } else {
             // Zero-size allocation (5%)
@@ -519,7 +524,7 @@ TEST(DeallocationOrderFuzzing) {
             if (p) {
                 uint64_t seed = i;
                 fill_pattern(p, size, seed);
-                live.push_back({p, size, seed});
+                live.push_back({p, size, size, seed});
             }
         }
         dealloc_fn(live, ctx, rng);
@@ -612,7 +617,7 @@ TEST(SizeClassBoundaryFuzzing) {
             if (p) {
                 uint64_t seed = rng();
                 fill_pattern(p, size, seed);
-                live.push_back({p, size, seed});
+                live.push_back({p, size, size, seed});
             }
         }
 

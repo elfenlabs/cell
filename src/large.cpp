@@ -53,7 +53,7 @@ namespace Cell {
         if (!ptr) {
             ptr = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
         }
-#else
+#elif defined(__linux__)
         // Linux: Try huge pages first if requested
         if (try_huge_pages && size >= kMinLargeSize) {
             ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE,
@@ -69,6 +69,13 @@ namespace Cell {
             if (ptr == MAP_FAILED) {
                 ptr = nullptr;
             }
+        }
+#else
+        // Other Unix (macOS, BSD): Standard mmap without huge pages
+        (void)try_huge_pages; // Unused on this platform
+        ptr = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (ptr == MAP_FAILED) {
+            ptr = nullptr;
         }
 #endif
 

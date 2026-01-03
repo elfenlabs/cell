@@ -133,6 +133,11 @@ if(CELL_BUILD_TESTS)
     add_executable(test_fuzz tests/test_fuzz.cpp)
     target_link_libraries(test_fuzz PRIVATE cell)
     add_test(NAME test_fuzz COMMAND test_fuzz)
+
+    # Code review bug regression tests
+    add_executable(test_review_bugs tests/test_review_bugs.cpp)
+    target_link_libraries(test_review_bugs PRIVATE cell)
+    add_test(NAME test_review_bugs COMMAND test_review_bugs)
 endif()
 
 # Benchmarks (optional, requires Google Benchmark)

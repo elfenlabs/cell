@@ -80,10 +80,18 @@ namespace Cell {
          * - <= 2MB: Buddy allocator
          * - > 2MB: Direct OS allocation
          *
+         * Alignment guarantees:
+         * - Sub-cell/cell allocations: Naturally aligned to 16 bytes (cell alignment)
+         * - Buddy allocations: 8-byte alignment (due to internal header)
+         * - For alignments > 16 bytes, use alloc_aligned() instead
+         *
          * @param size Size in bytes to allocate.
          * @param tag Application-defined tag for profiling (default: 0).
-         * @param alignment Required alignment (default: 8, must be power of 2).
+         * @param alignment Required alignment (default: 8, must be power of 2, max 16).
          * @return Pointer to allocated memory, or nullptr on failure.
+         *
+         * @note The alignment parameter only affects size class selection for sub-cell.
+         *       For guaranteed large alignments (>16), use alloc_aligned().
          */
         [[nodiscard]] void *alloc_bytes(size_t size, uint8_t tag = 0, size_t alignment = 8);
 
@@ -282,6 +290,14 @@ namespace Cell {
          * @brief Returns the current budget limit.
          */
         [[nodiscard]] size_t get_budget() const { return m_budget; }
+
+        /**
+         * @brief Returns current memory usage tracked against budget.
+         * This is the actual allocated size (rounded to size classes).
+         */
+        [[nodiscard]] size_t get_budget_current() const {
+            return m_budget_current.load(std::memory_order_relaxed);
+        }
 
         /**
          * @brief Sets a callback for when allocations exceed budget.
