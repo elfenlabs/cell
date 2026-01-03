@@ -4,7 +4,10 @@
 #include <cassert>
 #include <cstring>
 
-#ifdef _WIN32
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <sys/mman.h>

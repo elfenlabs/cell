@@ -25,7 +25,7 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --config Release
+        run: ctest --test-dir build --output-on-failure
 
   debug-features:
     name: Debug Features (Linux)
@@ -49,7 +49,7 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --config Release
+        run: ctest --test-dir build --output-on-failure
 
   budget-instrumentation:
     name: Budget & Instrumentation (Linux)
@@ -73,4 +73,4 @@ jobs:
         run: cmake --build build --config Release
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure --config Release
+        run: ctest --test-dir build --output-on-failure

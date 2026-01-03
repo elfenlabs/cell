@@ -16,6 +16,7 @@
 #include <atomic>
 #include <cassert>
 #include <chrono>
+#include <cinttypes>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -310,7 +311,8 @@ TEST(ReallocFuzzing) {
         } else if (change == 2) {
             new_size = rec.size + (rng() % 10000); // Grow random
         } else {
-            new_size = std::max(size_t{64}, rec.size - (rng() % (rec.size / 2 + 1))); // Shrink
+            new_size = std::max(
+                size_t{64}, rec.size - (static_cast<size_t>(rng()) % (rec.size / 2 + 1))); // Shrink
         }
 
         new_size = std::max(new_size, size_t{64});               // Keep minimum
@@ -805,7 +807,7 @@ TEST(SeedReproducibility) {
     uint64_t result2 = run_sequence(seed);
 
     assert(result1 == result2 && "Non-deterministic behavior detected!");
-    printf("  PASSED (reproducible with seed 0x%lX)\n", seed);
+    printf("  PASSED (reproducible with seed 0x%" PRIx64 ")\n", seed);
 }
 
 // =============================================================================
