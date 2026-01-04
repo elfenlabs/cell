@@ -1421,7 +1421,7 @@ namespace Cell {
         }
     }
 
-    void Context::flush_tls_bin_caches() {
+    void Context::flush_tls_caches() {
         for (size_t bin_index = 0; bin_index < kTlsBinCacheCount; ++bin_index) {
             TlsBinCache &cache = t_bin_cache[bin_index];
 

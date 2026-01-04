@@ -49,6 +49,11 @@ namespace Cell {
      * @brief A memory environment owning a reserved virtual address range.
      *
      * RAII: Memory is released when the Context is destroyed.
+     *
+     * @warning DESIGN CONSTRAINT: Only ONE Context instance per thread is supported at a time.
+     * The TLS cache scheme assumes a single active Context per thread. Sequential Contexts
+     * (create → destroy → create) are safe, but concurrent Contexts on the same thread will
+     * cause cache conflicts and undefined behavior.
      */
     class Context {
     public:
@@ -64,7 +69,7 @@ namespace Cell {
          * @warning All threads must stop using this Context before destruction.
          * Any pointers obtained from this Context become invalid after destruction.
          * Thread-local caches are only cleared for the calling thread; other
-         * threads should call flush_tls_bin_caches() before destruction.
+         * threads should call flush_tls_caches() before destruction.
          */
         ~Context();
 
@@ -224,7 +229,17 @@ namespace Cell {
          * Call this before thread exit to avoid leaked cached blocks.
          * Only affects bins 0-3 (16B, 32B, 64B, 128B).
          */
-        void flush_tls_bin_caches();
+        /**
+         * @brief Flush all thread-local caches (both cell-level and bin-level) to global pools.
+         *
+         * Worker threads should call this before exiting to return cached allocations
+         * to the global pool, preventing resource leaks. This flushes both t_cache
+         * (cell-level) and t_bin_cache (sub-cell bins).
+         *
+         * Note: This prevents resource leaks but does NOT prevent crashes. Threads must
+         * still be properly joined before Context destruction.
+         */
+        void flush_tls_caches();
 
         // =====================================================================
         // Cell-Level Allocation API (for 16KB blocks or internal use)

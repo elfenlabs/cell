@@ -123,7 +123,7 @@ TEST(MultiThreadedCell) {
             success_count += static_cast<int>(local_cells.size());
             
             // Flush TLS caches before thread exit to prevent accessing invalid memory
-            ctx.flush_tls_bin_caches();
+            ctx.flush_tls_caches();
         });
     }
 
