@@ -140,7 +140,7 @@ TEST(ArenaRelease) {
 
     // Allocate enough to use multiple cells
     for (int i = 0; i < 100; ++i) {
-        arena.alloc(1024);
+        (void)arena.alloc(1024);
     }
 
     size_t cells_before = arena.cell_count();
@@ -300,7 +300,7 @@ TEST(ArenaIntrospection) {
     assert(arena.bytes_allocated() == 0 && "Should start at 0");
     assert(arena.cell_count() == 0 && "Should start with 0 cells");
 
-    arena.alloc(100);
+    (void)arena.alloc(100);
 
     assert(arena.bytes_allocated() == 100 && "Should track allocation");
     assert(arena.cell_count() == 1 && "Should have 1 cell");

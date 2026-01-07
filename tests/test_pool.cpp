@@ -254,12 +254,12 @@ TEST(ArenaScopeNested) {
 
     {
         Cell::ArenaScope outer(arena);
-        arena.alloc(100);
+        (void)arena.alloc(100);
         size_t after_outer = arena.bytes_allocated();
 
         {
             Cell::ArenaScope inner(arena);
-            arena.alloc(200);
+            (void)arena.alloc(200);
             printf("  Inner scope: %zu bytes\n", arena.bytes_allocated());
         }
 

@@ -171,7 +171,7 @@ namespace Cell {
         for (size_t i = 0; i < kTlsBinCacheCount; ++i) {
             t_bin_cache[i].count = 0;
         }
-        
+
         // Also clear the cell-level TLS cache (don't flush, just clear)
         // The cached cells will be freed when the memory region is unmapped
         // Flushing would push them to the global pool which is about to be unmapped
@@ -719,7 +719,10 @@ namespace Cell {
 #endif
 
         CellHeader *header = get_header(ptr);
+
+#ifdef CELL_ENABLE_STATS
         uint8_t tag = header->tag;
+#endif
 
         if (header->size_class == kFullCellMarker) {
             // Full-cell allocation
@@ -1469,7 +1472,7 @@ namespace Cell {
                 }
             }
         }
-        
+
         // Also flush the cell-level TLS cache
         if (m_allocator) {
             m_allocator->flush_tls_cache();

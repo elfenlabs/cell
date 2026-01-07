@@ -19,6 +19,13 @@ target_include_directories(cell PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
+# Compiler warnings
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(cell PRIVATE -Wall -Wextra)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "MSVC")
+    target_compile_options(cell PRIVATE /W4)
+endif()
+
 # Memory statistics (compile-time optional)
 option(CELL_ENABLE_STATS "Enable memory statistics tracking" OFF)
 if(CELL_ENABLE_STATS)

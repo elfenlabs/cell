@@ -95,7 +95,6 @@ namespace Cell {
         if (m_head && m_cell_count > 1) {
             // Find the first (oldest) cell
             CellData *current = m_head;
-            CellData *prev = nullptr;
 
             while (current) {
                 CellLink *link = get_link(current);
@@ -103,7 +102,6 @@ namespace Cell {
                     // This is the last in the chain (first allocated)
                     break;
                 }
-                prev = current;
                 current = link->next;
             }
 
